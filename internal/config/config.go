@@ -53,7 +53,6 @@ type Config struct {
 	Tailscale TailscaleConfig `json:"tailscale,omitempty"`
 	Bindings  []AgentBinding  `json:"bindings,omitempty"`
 	mu            sync.RWMutex
-	HasOAuthToken bool `json:"-"` // runtime flag: OAuth token file exists
 }
 
 // TailscaleConfig configures the optional Tailscale tsnet listener.

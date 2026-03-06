@@ -8,7 +8,7 @@ import { SearchInput } from "@/components/shared/search-input";
 import { Pagination } from "@/components/shared/pagination";
 import { TableSkeleton } from "@/components/shared/loading-skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { useProviders, OAUTH_PROVIDER_ID, type ProviderData, type ProviderInput } from "./hooks/use-providers";
+import { useProviders, type ProviderData, type ProviderInput } from "./hooks/use-providers";
 import { ProviderFormDialog } from "./provider-form-dialog";
 import { useMinLoading } from "@/hooks/use-min-loading";
 import { useDeferredLoading } from "@/hooks/use-deferred-loading";
@@ -143,7 +143,7 @@ export function ProvidersPage() {
                         {p.api_base || "-"}
                       </td>
                       <td className="px-4 py-3">
-                        {p.id === OAUTH_PROVIDER_ID ? (
+                        {p.provider_type === "chatgpt_oauth" ? (
                           <Badge variant="outline" className="text-xs">OAuth Token</Badge>
                         ) : p.api_key === "***" ? (
                           <Badge variant="outline" className="font-mono text-xs">***</Badge>
@@ -157,7 +157,7 @@ export function ProvidersPage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {p.id !== OAUTH_PROVIDER_ID && (
+                        {p.provider_type !== "chatgpt_oauth" && (
                           <div className="flex items-center justify-end gap-1">
                             <Button
                               variant="ghost"

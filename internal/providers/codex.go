@@ -2,7 +2,6 @@ package providers
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -45,8 +44,8 @@ func NewCodexProvider(name string, tokenSource TokenSource, apiBase, defaultMode
 	}
 }
 
-func (p *CodexProvider) Name() string         { return p.name }
-func (p *CodexProvider) DefaultModel() string  { return p.defaultModel }
+func (p *CodexProvider) Name() string          { return p.name }
+func (p *CodexProvider) DefaultModel() string   { return p.defaultModel }
 func (p *CodexProvider) SupportsThinking() bool { return true }
 
 func (p *CodexProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
@@ -66,10 +65,10 @@ func (p *CodexProvider) ChatStream(ctx context.Context, req ChatRequest, onChunk
 	defer respBody.Close()
 
 	result := &ChatResponse{FinishReason: "stop"}
-	toolCalls := make(map[string]*responsesToolCallAcc) // keyed by item_id
+	toolCalls := make(map[string]*codexToolCallAcc) // keyed by item_id
 
 	scanner := bufio.NewScanner(respBody)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line for large tool call / thinking chunks
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -81,83 +80,12 @@ func (p *CodexProvider) ChatStream(ctx context.Context, req ChatRequest, onChunk
 			break
 		}
 
-		var event responsesSSEEvent
+		var event codexSSEEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
 
-		switch event.Type {
-		case "response.output_text.delta":
-			if event.Delta != "" {
-				result.Content += event.Delta
-				if onChunk != nil {
-					onChunk(StreamChunk{Content: event.Delta})
-				}
-			}
-
-		case "response.function_call_arguments.delta":
-			if event.ItemID != "" {
-				acc := toolCalls[event.ItemID]
-				if acc == nil {
-					acc = &responsesToolCallAcc{}
-					toolCalls[event.ItemID] = acc
-				}
-				acc.rawArgs += event.Delta
-			}
-
-		case "response.output_item.done":
-			if event.Item != nil {
-				switch event.Item.Type {
-				case "message":
-					// Capture phase from assistant message items (gpt-5.3-codex).
-					if event.Item.Phase != "" {
-						result.Phase = event.Item.Phase
-					}
-
-				case "function_call":
-					acc := toolCalls[event.Item.ID]
-					if acc == nil {
-						acc = &responsesToolCallAcc{}
-					}
-					acc.callID = event.Item.CallID
-					acc.name = event.Item.Name
-					if event.Item.Arguments != "" {
-						acc.rawArgs = event.Item.Arguments
-					}
-					toolCalls[event.Item.ID] = acc
-
-				case "reasoning":
-					if len(event.Item.Summary) > 0 {
-						for _, s := range event.Item.Summary {
-							if s.Text != "" {
-								result.Thinking += s.Text
-								if onChunk != nil {
-									onChunk(StreamChunk{Thinking: s.Text})
-								}
-							}
-						}
-					}
-				}
-			}
-
-		case "response.completed", "response.incomplete", "response.failed":
-			if event.Response != nil {
-				if event.Response.Usage != nil {
-					u := event.Response.Usage
-					result.Usage = &Usage{
-						PromptTokens:     u.InputTokens,
-						CompletionTokens: u.OutputTokens,
-						TotalTokens:      u.TotalTokens,
-					}
-					if u.OutputTokensDetails != nil {
-						result.Usage.ThinkingTokens = u.OutputTokensDetails.ReasoningTokens
-					}
-				}
-				if event.Response.Status == "incomplete" {
-					result.FinishReason = "length"
-				}
-			}
-		}
+		p.processSSEEvent(&event, result, toolCalls, onChunk)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -189,290 +117,73 @@ func (p *CodexProvider) ChatStream(ctx context.Context, req ChatRequest, onChunk
 	return result, nil
 }
 
-// buildRequestBody converts internal ChatRequest to Responses API format.
-func (p *CodexProvider) buildRequestBody(req ChatRequest, stream bool) map[string]interface{} {
-	model := req.Model
-	if model == "" {
-		model = p.defaultModel
-	}
-
-	// Separate system messages as instructions, convert rest to input items
-	var instructions string
-	var input []interface{}
-
-	for _, m := range req.Messages {
-		switch m.Role {
-		case "system":
-			if instructions == "" {
-				instructions = m.Content
-			} else {
-				instructions += "\n\n" + m.Content
+// processSSEEvent handles a single SSE event during streaming.
+func (p *CodexProvider) processSSEEvent(event *codexSSEEvent, result *ChatResponse, toolCalls map[string]*codexToolCallAcc, onChunk func(StreamChunk)) {
+	switch event.Type {
+	case "response.output_text.delta":
+		if event.Delta != "" {
+			result.Content += event.Delta
+			if onChunk != nil {
+				onChunk(StreamChunk{Content: event.Delta})
 			}
-
-		case "user":
-			if len(m.Images) > 0 {
-				// Multimodal input
-				var parts []map[string]interface{}
-				for _, img := range m.Images {
-					parts = append(parts, map[string]interface{}{
-						"type":      "input_image",
-						"image_url": fmt.Sprintf("data:%s;base64,%s", img.MimeType, img.Data),
-					})
-				}
-				if m.Content != "" {
-					parts = append(parts, map[string]interface{}{
-						"type": "input_text",
-						"text": m.Content,
-					})
-				}
-				input = append(input, map[string]interface{}{
-					"role":    "user",
-					"content": parts,
-				})
-			} else {
-				input = append(input, map[string]interface{}{
-					"role":    "user",
-					"content": m.Content,
-				})
-			}
-
-		case "assistant":
-			// Assistant messages with tool calls → separate function_call items
-			if len(m.ToolCalls) > 0 {
-				for _, tc := range m.ToolCalls {
-					argsJSON, _ := json.Marshal(tc.Arguments)
-					callID := toFcID(tc.ID)
-					input = append(input, map[string]interface{}{
-						"type":      "function_call",
-						"id":        callID,
-						"call_id":   callID,
-						"name":      tc.Name,
-						"arguments": string(argsJSON),
-					})
-				}
-			}
-			// Also include text message if present
-			if m.Content != "" {
-				item := map[string]interface{}{
-					"type": "message",
-					"role": "assistant",
-					"content": []map[string]interface{}{
-						{"type": "output_text", "text": m.Content},
-					},
-				}
-				// Preserve phase metadata for gpt-5.3-codex (required for performance).
-				if m.Phase != "" {
-					item["phase"] = m.Phase
-				}
-				input = append(input, item)
-			}
-
-		case "tool":
-			// Tool results → function_call_output items
-			input = append(input, map[string]interface{}{
-				"type":    "function_call_output",
-				"call_id": toFcID(m.ToolCallID),
-				"output":  m.Content,
-			})
 		}
-	}
 
-	body := map[string]interface{}{
-		"model":  model,
-		"input":  input,
-		"stream": stream,
-		"store":  false,
-	}
-
-	if instructions == "" {
-		instructions = "You are a helpful assistant."
-	}
-	body["instructions"] = instructions
-
-	// Convert tools to Responses API format (internally tagged)
-	if len(req.Tools) > 0 {
-		var tools []map[string]interface{}
-		for _, t := range req.Tools {
-			tools = append(tools, map[string]interface{}{
-				"type":        "function",
-				"name":        t.Function.Name,
-				"description": t.Function.Description,
-				"parameters":  t.Function.Parameters,
-			})
+	case "response.function_call_arguments.delta":
+		if event.ItemID != "" {
+			acc := toolCalls[event.ItemID]
+			if acc == nil {
+				acc = &codexToolCallAcc{}
+				toolCalls[event.ItemID] = acc
+			}
+			acc.rawArgs += event.Delta
 		}
-		body["tools"] = tools
-	}
 
-	// Options — chatgpt.com backend does not support max_output_tokens or temperature
-
-	if level, ok := req.Options[OptThinkingLevel].(string); ok && level != "" && level != "off" {
-		body["reasoning"] = map[string]interface{}{"effort": level}
-	}
-
-	return body
-}
-
-func (p *CodexProvider) doRequest(ctx context.Context, body interface{}) (io.ReadCloser, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("%s: marshal request: %w", p.name, err)
-	}
-
-	endpoint := p.apiBase + "/codex/responses"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("%s: create request: %w", p.name, err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	token, err := p.tokenSource.Token()
-	if err != nil {
-		return nil, fmt.Errorf("%s: get auth token: %w", p.name, err)
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("OpenAI-Beta", "responses=v1")
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("%s: request failed: %w", p.name, err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		retryAfter := ParseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, &HTTPError{
-			Status:     resp.StatusCode,
-			Body:       fmt.Sprintf("%s: %s", p.name, string(respBody)),
-			RetryAfter: retryAfter,
-		}
-	}
-
-	return resp.Body, nil
-}
-
-func (p *CodexProvider) parseResponse(resp *responsesAPIResponse) *ChatResponse {
-	result := &ChatResponse{FinishReason: "stop"}
-
-	for _, item := range resp.Output {
-		switch item.Type {
-		case "message":
-			for _, c := range item.Content {
-				if c.Type == "output_text" {
-					result.Content += c.Text
+	case "response.output_item.done":
+		if event.Item != nil {
+			switch event.Item.Type {
+			case "message":
+				if event.Item.Phase != "" {
+					result.Phase = event.Item.Phase
 				}
-			}
-			if item.Phase != "" {
-				result.Phase = item.Phase
-			}
-
-		case "function_call":
-			args := make(map[string]interface{})
-			_ = json.Unmarshal([]byte(item.Arguments), &args)
-			result.ToolCalls = append(result.ToolCalls, ToolCall{
-				ID:        item.CallID,
-				Name:      item.Name,
-				Arguments: args,
-			})
-
-		case "reasoning":
-			for _, s := range item.Summary {
-				if s.Text != "" {
-					result.Thinking += s.Text
+			case "function_call":
+				acc := toolCalls[event.Item.ID]
+				if acc == nil {
+					acc = &codexToolCallAcc{}
+				}
+				acc.callID = event.Item.CallID
+				acc.name = event.Item.Name
+				if event.Item.Arguments != "" {
+					acc.rawArgs = event.Item.Arguments
+				}
+				toolCalls[event.Item.ID] = acc
+			case "reasoning":
+				for _, s := range event.Item.Summary {
+					if s.Text != "" {
+						result.Thinking += s.Text
+						if onChunk != nil {
+							onChunk(StreamChunk{Thinking: s.Text})
+						}
+					}
 				}
 			}
 		}
-	}
 
-	if len(result.ToolCalls) > 0 {
-		result.FinishReason = "tool_calls"
-	}
-
-	if resp.Usage != nil {
-		result.Usage = &Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
+	case "response.completed", "response.incomplete", "response.failed":
+		if event.Response != nil {
+			if event.Response.Usage != nil {
+				u := event.Response.Usage
+				result.Usage = &Usage{
+					PromptTokens:     u.InputTokens,
+					CompletionTokens: u.OutputTokens,
+					TotalTokens:      u.TotalTokens,
+				}
+				if u.OutputTokensDetails != nil {
+					result.Usage.ThinkingTokens = u.OutputTokensDetails.ReasoningTokens
+				}
+			}
+			if event.Response.Status == "incomplete" {
+				result.FinishReason = "length"
+			}
 		}
-		if resp.Usage.OutputTokensDetails != nil {
-			result.Usage.ThinkingTokens = resp.Usage.OutputTokensDetails.ReasoningTokens
-		}
 	}
-
-	return result
-}
-
-// toFcID ensures a tool call ID starts with "fc_" as required by the Responses API.
-func toFcID(id string) string {
-	if strings.HasPrefix(id, "fc_") {
-		return id
-	}
-	if strings.HasPrefix(id, "tool_") {
-		return "fc_" + id[len("tool_"):]
-	}
-	if strings.HasPrefix(id, "call_") {
-		return "fc_" + id[len("call_"):]
-	}
-	return "fc_" + id
-}
-
-// --- Wire types for the Responses API ---
-
-type responsesAPIResponse struct {
-	ID     string              `json:"id"`
-	Object string              `json:"object"`
-	Model  string              `json:"model"`
-	Output []responsesItem     `json:"output"`
-	Usage  *responsesUsage     `json:"usage,omitempty"`
-	Status string              `json:"status"`
-}
-
-type responsesItem struct {
-	ID        string               `json:"id"`
-	Type      string               `json:"type"` // "message", "function_call", "reasoning"
-	Role      string               `json:"role,omitempty"`
-	Phase     string               `json:"phase,omitempty"` // gpt-5.3-codex: "commentary" or "final_answer"
-	Content   []responsesContent   `json:"content,omitempty"`
-	CallID    string               `json:"call_id,omitempty"`
-	Name      string               `json:"name,omitempty"`
-	Arguments string               `json:"arguments,omitempty"`
-	Summary   []responsesSummary   `json:"summary,omitempty"`
-}
-
-type responsesContent struct {
-	Type string `json:"type"` // "output_text"
-	Text string `json:"text"`
-}
-
-type responsesSummary struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type responsesUsage struct {
-	InputTokens         int                     `json:"input_tokens"`
-	OutputTokens        int                     `json:"output_tokens"`
-	TotalTokens         int                     `json:"total_tokens"`
-	OutputTokensDetails *responsesTokensDetails `json:"output_tokens_details,omitempty"`
-}
-
-type responsesTokensDetails struct {
-	ReasoningTokens int `json:"reasoning_tokens"`
-}
-
-// SSE streaming types
-
-type responsesSSEEvent struct {
-	Type     string               `json:"type"`
-	Delta    string               `json:"delta,omitempty"`
-	ItemID   string               `json:"item_id,omitempty"`
-	Item     *responsesItem       `json:"item,omitempty"`
-	Response *responsesAPIResponse `json:"response,omitempty"`
-}
-
-type responsesToolCallAcc struct {
-	callID  string
-	name    string
-	rawArgs string
 }

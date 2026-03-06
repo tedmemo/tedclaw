@@ -1,17 +1,122 @@
 package oauth
 
 import (
-	"os"
-	"path/filepath"
+	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
-func TestTokenSourceSaveAndLoad(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "tokens", "test.json")
+// --- mock stores ---
 
-	ts := NewTokenSource(path, "")
+type mockProviderStore struct {
+	providers map[string]*store.LLMProviderData
+}
+
+func newMockProviderStore() *mockProviderStore {
+	return &mockProviderStore{providers: make(map[string]*store.LLMProviderData)}
+}
+
+func (m *mockProviderStore) CreateProvider(_ context.Context, p *store.LLMProviderData) error {
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
+	m.providers[p.Name] = p
+	return nil
+}
+
+func (m *mockProviderStore) GetProvider(_ context.Context, id uuid.UUID) (*store.LLMProviderData, error) {
+	for _, p := range m.providers {
+		if p.ID == id {
+			return p, nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockProviderStore) GetProviderByName(_ context.Context, name string) (*store.LLMProviderData, error) {
+	if p, ok := m.providers[name]; ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockProviderStore) ListProviders(_ context.Context) ([]store.LLMProviderData, error) {
+	var out []store.LLMProviderData
+	for _, p := range m.providers {
+		out = append(out, *p)
+	}
+	return out, nil
+}
+
+func (m *mockProviderStore) UpdateProvider(_ context.Context, id uuid.UUID, updates map[string]any) error {
+	for _, p := range m.providers {
+		if p.ID == id {
+			if v, ok := updates["api_key"]; ok {
+				p.APIKey = v.(string)
+			}
+			if v, ok := updates["settings"]; ok {
+				p.Settings = v.(json.RawMessage)
+			}
+			if v, ok := updates["enabled"]; ok {
+				p.Enabled = v.(bool)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
+func (m *mockProviderStore) DeleteProvider(_ context.Context, id uuid.UUID) error {
+	for name, p := range m.providers {
+		if p.ID == id {
+			delete(m.providers, name)
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
+type mockSecretsStore struct {
+	data map[string]string
+}
+
+func newMockSecretsStore() *mockSecretsStore {
+	return &mockSecretsStore{data: make(map[string]string)}
+}
+
+func (m *mockSecretsStore) Get(_ context.Context, key string) (string, error) {
+	if v, ok := m.data[key]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("not found: %s", key)
+}
+
+func (m *mockSecretsStore) Set(_ context.Context, key, value string) error {
+	m.data[key] = value
+	return nil
+}
+
+func (m *mockSecretsStore) Delete(_ context.Context, key string) error {
+	delete(m.data, key)
+	return nil
+}
+
+func (m *mockSecretsStore) GetAll(_ context.Context) (map[string]string, error) {
+	return m.data, nil
+}
+
+// --- tests ---
+
+func TestDBTokenSourceSaveAndLoad(t *testing.T) {
+	provStore := newMockProviderStore()
+	secretStore := newMockSecretsStore()
+	ts := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
 
 	resp := &OpenAITokenResponse{
 		AccessToken:  "access-token-abc123",
@@ -19,21 +124,35 @@ func TestTokenSourceSaveAndLoad(t *testing.T) {
 		ExpiresIn:    3600,
 	}
 
-	if err := ts.Save(resp); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	// Verify file was created with correct permissions
-	info, err := os.Stat(path)
+	ctx := context.Background()
+	id, err := ts.SaveOAuthResult(ctx, resp)
 	if err != nil {
-		t.Fatalf("Stat: %v", err)
+		t.Fatalf("SaveOAuthResult: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
-		t.Errorf("file permissions = %o, want 0600", perm)
+	if id == uuid.Nil {
+		t.Fatal("expected non-nil provider ID")
 	}
 
-	// Load and verify token
-	ts2 := NewTokenSource(path, "")
+	// Verify provider was created
+	p, err := provStore.GetProviderByName(ctx, DefaultProviderName)
+	if err != nil {
+		t.Fatalf("GetProviderByName: %v", err)
+	}
+	if p.APIKey != "access-token-abc123" {
+		t.Errorf("APIKey = %q, want %q", p.APIKey, "access-token-abc123")
+	}
+
+	// Verify refresh token was saved
+	rt, err := secretStore.Get(ctx, refreshTokenSecretKey)
+	if err != nil {
+		t.Fatalf("Get refresh token: %v", err)
+	}
+	if rt != "refresh-token-xyz789" {
+		t.Errorf("refresh token = %q, want %q", rt, "refresh-token-xyz789")
+	}
+
+	// Load token from fresh instance
+	ts2 := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
 	token, err := ts2.Token()
 	if err != nil {
 		t.Fatalf("Token: %v", err)
@@ -43,55 +162,10 @@ func TestTokenSourceSaveAndLoad(t *testing.T) {
 	}
 }
 
-func TestTokenSourceEncrypted(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "encrypted.json")
-	encKey := "test-encryption-key-32-bytes!XYZ" // exactly 32 bytes for AES-256
-
-	ts := NewTokenSource(path, encKey)
-
-	resp := &OpenAITokenResponse{
-		AccessToken:  "secret-access-token",
-		RefreshToken: "secret-refresh-token",
-		ExpiresIn:    7200,
-	}
-
-	if err := ts.Save(resp); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	// Verify file content is not plaintext
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if string(data) == "" {
-		t.Fatal("file is empty")
-	}
-
-	// Load with correct key should work
-	ts2 := NewTokenSource(path, encKey)
-	token, err := ts2.Token()
-	if err != nil {
-		t.Fatalf("Token: %v", err)
-	}
-	if token != "secret-access-token" {
-		t.Errorf("Token() = %q, want %q", token, "secret-access-token")
-	}
-
-	// Load with wrong key should fail
-	ts3 := NewTokenSource(path, "wrong-key-that-is-32-bytes-long!")
-	_, err = ts3.Token()
-	if err == nil {
-		t.Error("expected error with wrong key, got nil")
-	}
-}
-
-func TestTokenSourceCaching(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cached.json")
-
-	ts := NewTokenSource(path, "")
+func TestDBTokenSourceCaching(t *testing.T) {
+	provStore := newMockProviderStore()
+	secretStore := newMockSecretsStore()
+	ts := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
 
 	resp := &OpenAITokenResponse{
 		AccessToken:  "cached-token",
@@ -99,18 +173,20 @@ func TestTokenSourceCaching(t *testing.T) {
 		ExpiresIn:    3600,
 	}
 
-	if err := ts.Save(resp); err != nil {
-		t.Fatalf("Save: %v", err)
+	ctx := context.Background()
+	if _, err := ts.SaveOAuthResult(ctx, resp); err != nil {
+		t.Fatalf("SaveOAuthResult: %v", err)
 	}
 
-	// First call loads from disk
+	// Token is cached from SaveOAuthResult
 	token1, err := ts.Token()
 	if err != nil {
 		t.Fatalf("Token (1): %v", err)
 	}
 
-	// Delete the file — cached token should still work
-	os.Remove(path)
+	// Delete provider from store — cached token should still work
+	p, _ := provStore.GetProviderByName(ctx, DefaultProviderName)
+	delete(provStore.providers, DefaultProviderName)
 
 	token2, err := ts.Token()
 	if err != nil {
@@ -120,66 +196,129 @@ func TestTokenSourceCaching(t *testing.T) {
 	if token1 != token2 {
 		t.Errorf("cached tokens differ: %q vs %q", token1, token2)
 	}
+
+	// Restore for cleanup
+	provStore.providers[DefaultProviderName] = p
 }
 
-func TestDefaultTokenPath(t *testing.T) {
-	path := DefaultTokenPath()
-	if path == "" {
-		t.Error("DefaultTokenPath() returned empty string")
-	}
-	if !filepath.IsAbs(path) {
-		t.Errorf("DefaultTokenPath() = %q, expected absolute path", path)
-	}
-	if filepath.Base(path) != "openai.json" {
-		t.Errorf("DefaultTokenPath() base = %q, want openai.json", filepath.Base(path))
-	}
-}
+func TestDBTokenSourceExists(t *testing.T) {
+	provStore := newMockProviderStore()
+	secretStore := newMockSecretsStore()
+	ts := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
+	ctx := context.Background()
 
-func TestTokenFileExists(t *testing.T) {
-	dir := t.TempDir()
-
-	// Non-existent
-	if TokenFileExists(filepath.Join(dir, "nonexistent.json")) {
-		t.Error("TokenFileExists returned true for non-existent file")
+	if ts.Exists(ctx) {
+		t.Error("Exists() = true before save, want false")
 	}
-
-	// Create file
-	path := filepath.Join(dir, "exists.json")
-	os.WriteFile(path, []byte("{}"), 0600)
-	if !TokenFileExists(path) {
-		t.Error("TokenFileExists returned false for existing file")
-	}
-}
-
-func TestTokenFileSaveCreatesExpiresAt(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "expiry.json")
-
-	ts := NewTokenSource(path, "")
-	before := time.Now()
 
 	resp := &OpenAITokenResponse{
 		AccessToken:  "token",
 		RefreshToken: "refresh",
 		ExpiresIn:    3600,
 	}
-	if err := ts.Save(resp); err != nil {
-		t.Fatalf("Save: %v", err)
+	if _, err := ts.SaveOAuthResult(ctx, resp); err != nil {
+		t.Fatalf("SaveOAuthResult: %v", err)
 	}
 
-	after := time.Now()
+	if !ts.Exists(ctx) {
+		t.Error("Exists() = false after save, want true")
+	}
+}
 
-	// Load and check expiry
-	ts2 := NewTokenSource(path, "")
-	tf, err := ts2.load()
+func TestDBTokenSourceDelete(t *testing.T) {
+	provStore := newMockProviderStore()
+	secretStore := newMockSecretsStore()
+	ts := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
+	ctx := context.Background()
+
+	resp := &OpenAITokenResponse{
+		AccessToken:  "to-delete",
+		RefreshToken: "refresh-to-delete",
+		ExpiresIn:    3600,
+	}
+	if _, err := ts.SaveOAuthResult(ctx, resp); err != nil {
+		t.Fatalf("SaveOAuthResult: %v", err)
+	}
+
+	if err := ts.Delete(ctx); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if ts.Exists(ctx) {
+		t.Error("Exists() = true after delete, want false")
+	}
+
+	if _, err := secretStore.Get(ctx, refreshTokenSecretKey); err == nil {
+		t.Error("refresh token still exists after delete")
+	}
+}
+
+func TestDBTokenSourceUpdateExisting(t *testing.T) {
+	provStore := newMockProviderStore()
+	secretStore := newMockSecretsStore()
+	ts := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
+	ctx := context.Background()
+
+	// Save first time
+	resp1 := &OpenAITokenResponse{
+		AccessToken:  "token-v1",
+		RefreshToken: "refresh-v1",
+		ExpiresIn:    3600,
+	}
+	id1, err := ts.SaveOAuthResult(ctx, resp1)
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("SaveOAuthResult (1): %v", err)
 	}
 
-	expectedMin := before.Add(3600 * time.Second)
-	expectedMax := after.Add(3600 * time.Second)
+	// Save second time — should update, not create duplicate
+	resp2 := &OpenAITokenResponse{
+		AccessToken:  "token-v2",
+		RefreshToken: "refresh-v2",
+		ExpiresIn:    7200,
+	}
+	id2, err := ts.SaveOAuthResult(ctx, resp2)
+	if err != nil {
+		t.Fatalf("SaveOAuthResult (2): %v", err)
+	}
 
-	if tf.ExpiresAt.Before(expectedMin) || tf.ExpiresAt.After(expectedMax) {
-		t.Errorf("ExpiresAt = %v, want between %v and %v", tf.ExpiresAt, expectedMin, expectedMax)
+	if id1 != id2 {
+		t.Errorf("IDs differ on update: %s vs %s", id1, id2)
+	}
+
+	p, _ := provStore.GetProviderByName(ctx, DefaultProviderName)
+	if p.APIKey != "token-v2" {
+		t.Errorf("APIKey = %q after update, want %q", p.APIKey, "token-v2")
+	}
+}
+
+func TestDBTokenSourceSettings(t *testing.T) {
+	provStore := newMockProviderStore()
+	secretStore := newMockSecretsStore()
+	ts := NewDBTokenSource(provStore, secretStore, DefaultProviderName)
+	ctx := context.Background()
+
+	resp := &OpenAITokenResponse{
+		AccessToken:  "token",
+		RefreshToken: "refresh",
+		ExpiresIn:    3600,
+		Scope:        "openid profile",
+	}
+	if _, err := ts.SaveOAuthResult(ctx, resp); err != nil {
+		t.Fatalf("SaveOAuthResult: %v", err)
+	}
+
+	p, _ := provStore.GetProviderByName(ctx, DefaultProviderName)
+	var settings OAuthSettings
+	if err := json.Unmarshal(p.Settings, &settings); err != nil {
+		t.Fatalf("Unmarshal settings: %v", err)
+	}
+
+	if settings.Scopes != "openid profile" {
+		t.Errorf("Scopes = %q, want %q", settings.Scopes, "openid profile")
+	}
+
+	expectedMin := time.Now().Add(3600 * time.Second).Unix()
+	if settings.ExpiresAt < expectedMin-5 {
+		t.Errorf("ExpiresAt = %d, expected >= %d", settings.ExpiresAt, expectedMin-5)
 	}
 }

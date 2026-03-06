@@ -5,26 +5,35 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/nextlevelbuilder/goclaw/internal/oauth"
+	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
 // OAuthHandler handles OAuth-related HTTP endpoints for web UI.
-// Available in both standalone and managed modes.
 type OAuthHandler struct {
-	token  string // gateway auth token
-	encKey string // encryption key for token storage
+	token       string // gateway auth token
+	provStore   store.ProviderStore
+	secretStore store.ConfigSecretsStore
+	providerReg *providers.Registry
 
 	mu      sync.Mutex
 	pending *oauth.PendingLogin // active OAuth flow (if any)
 }
 
 // NewOAuthHandler creates a handler for OAuth endpoints.
-func NewOAuthHandler(token, encryptionKey string) *OAuthHandler {
-	return &OAuthHandler{token: token, encKey: encryptionKey}
+func NewOAuthHandler(token string, provStore store.ProviderStore, secretStore store.ConfigSecretsStore, providerReg *providers.Registry) *OAuthHandler {
+	return &OAuthHandler{
+		token:       token,
+		provStore:   provStore,
+		secretStore: secretStore,
+		providerReg: providerReg,
+	}
 }
 
 // RegisterRoutes registers OAuth routes on the given mux.
@@ -45,44 +54,40 @@ func (h *OAuthHandler) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (h *OAuthHandler) newTokenSource() *oauth.DBTokenSource {
+	return oauth.NewDBTokenSource(h.provStore, h.secretStore, oauth.DefaultProviderName)
+}
+
 func (h *OAuthHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	tokenPath := oauth.DefaultTokenPath()
-	if !oauth.TokenFileExists(tokenPath) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"authenticated": false,
-		})
+	ts := h.newTokenSource()
+	if !ts.Exists(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 		return
 	}
 
-	ts := oauth.NewTokenSource(tokenPath, h.encKey)
 	if _, err := ts.Token(); err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated": false,
 			"error":         "token invalid or expired",
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
-		"provider_name": "openai-codex",
+		"provider_name": oauth.DefaultProviderName,
 	})
 }
 
-// handleStart initiates the OAuth PKCE flow from the web UI.
-// Starts a local callback server and returns the auth URL for the frontend to open.
 func (h *OAuthHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// Already authenticated? (check inside mutex to avoid TOCTOU)
-	tokenPath := oauth.DefaultTokenPath()
-	if oauth.TokenFileExists(tokenPath) {
-		ts := oauth.NewTokenSource(tokenPath, h.encKey)
+	// Already authenticated?
+	ts := h.newTokenSource()
+	if ts.Exists(r.Context()) {
 		if _, err := ts.Token(); err == nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"status": "already_authenticated",
-			})
+			writeJSON(w, http.StatusOK, map[string]any{"status": "already_authenticated"})
 			return
 		}
 	}
@@ -93,7 +98,6 @@ func (h *OAuthHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		h.pending = nil
 	}
 
-	// Start new OAuth flow
 	pending, err := oauth.StartLoginOpenAI()
 	if err != nil {
 		slog.Error("oauth.start", "error", err)
@@ -108,9 +112,7 @@ func (h *OAuthHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Wait for callback in background, save token when done
 	go h.waitForCallback(pending)
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"auth_url": pending.AuthURL,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"auth_url": pending.AuthURL})
 }
 
 // waitForCallback waits for the OAuth callback and saves the token.
@@ -131,19 +133,14 @@ func (h *OAuthHandler) waitForCallback(pending *oauth.PendingLogin) {
 		return
 	}
 
-	// Save token
-	tokenPath := oauth.DefaultTokenPath()
-	ts := oauth.NewTokenSource(tokenPath, h.encKey)
-	if err := ts.Save(tokenResp); err != nil {
+	if _, err := h.saveAndRegister(ctx, tokenResp); err != nil {
 		slog.Error("oauth.save_token", "error", err)
 		return
 	}
 
-	slog.Info("oauth: OpenAI token saved via web UI", "path", tokenPath)
+	slog.Info("oauth: OpenAI token saved via web UI callback")
 }
 
-// handleManualCallback accepts a pasted redirect URL from the frontend
-// for remote/VPS environments where localhost:1455 callback can't be reached.
 func (h *OAuthHandler) handleManualCallback(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RedirectURL string `json:"redirect_url"`
@@ -177,31 +174,48 @@ func (h *OAuthHandler) handleManualCallback(w http.ResponseWriter, r *http.Reque
 	}
 	h.mu.Unlock()
 
-	// Save token
-	tokenPath := oauth.DefaultTokenPath()
-	ts := oauth.NewTokenSource(tokenPath, h.encKey)
-	if err := ts.Save(tokenResp); err != nil {
+	providerID, err := h.saveAndRegister(r.Context(), tokenResp)
+	if err != nil {
 		slog.Error("oauth.save_token", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save token"})
 		return
 	}
 
-	slog.Info("oauth: OpenAI token saved via manual callback", "path", tokenPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	slog.Info("oauth: OpenAI token saved via manual callback")
+	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
-		"provider_name": "openai-codex",
+		"provider_name": oauth.DefaultProviderName,
+		"provider_id":   providerID.String(),
 	})
 }
 
 func (h *OAuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	tokenPath := oauth.DefaultTokenPath()
-	if err := os.Remove(tokenPath); err != nil {
-		if os.IsNotExist(err) {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "no token found"})
-			return
-		}
+	ts := h.newTokenSource()
+	if err := ts.Delete(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	if h.providerReg != nil {
+		h.providerReg.Unregister(oauth.DefaultProviderName)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
+}
+
+// saveAndRegister persists the OAuth result to DB and registers the CodexProvider in-memory.
+func (h *OAuthHandler) saveAndRegister(ctx context.Context, tokenResp *oauth.OpenAITokenResponse) (uuid.UUID, error) {
+	ts := h.newTokenSource()
+	providerID, err := ts.SaveOAuthResult(ctx, tokenResp)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// Register CodexProvider in-memory for immediate use
+	if h.providerReg != nil {
+		codex := providers.NewCodexProvider(oauth.DefaultProviderName, ts, "", "")
+		h.providerReg.Register(codex)
+	}
+
+	return providerID, nil
 }

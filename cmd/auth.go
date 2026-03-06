@@ -1,95 +1,96 @@
 package cmd
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"time"
+	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/nextlevelbuilder/goclaw/internal/oauth"
 )
 
 func authCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
 		Short: "Authenticate with LLM providers via OAuth",
+		Long:  "Manage OAuth authentication via the running gateway. Requires the gateway to be running.",
 	}
-	cmd.AddCommand(authOpenAICmd())
 	cmd.AddCommand(authStatusCmd())
 	cmd.AddCommand(authLogoutCmd())
 	return cmd
 }
 
-func authOpenAICmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "openai",
-		Short: "Sign in with your ChatGPT subscription (OAuth)",
-		Long:  "Authenticate with OpenAI using your ChatGPT Plus/Pro subscription via OAuth PKCE flow. This allows using your subscription's models without a separate API key.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
-			defer cancel()
-
-			fmt.Println("Starting OpenAI OAuth authentication...")
-			fmt.Println("This will open your browser to sign in with your ChatGPT account.")
-			fmt.Println()
-
-			tokenResp, err := oauth.LoginOpenAI(ctx)
-			if err != nil {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
-
-			// Save token
-			tokenPath := oauth.DefaultTokenPath()
-			encKey := os.Getenv("GOCLAW_ENCRYPTION_KEY")
-			ts := oauth.NewTokenSource(tokenPath, encKey)
-			if err := ts.Save(tokenResp); err != nil {
-				return fmt.Errorf("save token: %w", err)
-			}
-
-			fmt.Println()
-			fmt.Println("Authentication successful!")
-			fmt.Printf("Token saved to: %s\n", tokenPath)
-			fmt.Printf("Token expires in: %s\n", time.Duration(tokenResp.ExpiresIn)*time.Second)
-			fmt.Println()
-			fmt.Println("GoClaw will register the 'openai-codex' provider using your ChatGPT subscription.")
-			fmt.Println("Use model prefix 'openai-codex/' in agent config (e.g. openai-codex/gpt-4o).")
-			fmt.Println("Token will be refreshed automatically before expiry.")
-			return nil
-		},
+// gatewayURL returns the base URL for the running gateway.
+func gatewayURL() string {
+	if u := os.Getenv("GOCLAW_GATEWAY_URL"); u != "" {
+		return strings.TrimRight(u, "/")
 	}
+	host := os.Getenv("GOCLAW_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := os.Getenv("GOCLAW_PORT")
+	if port == "" {
+		port = "3577"
+	}
+	return fmt.Sprintf("http://%s:%s", host, port)
+}
+
+// gatewayRequest sends an authenticated request to the running gateway.
+func gatewayRequest(method, path string) (map[string]interface{}, error) {
+	url := gatewayURL() + path
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if token := os.Getenv("GOCLAW_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach gateway at %s: %w", gatewayURL(), err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("invalid response from gateway: %s", string(body))
+	}
+
+	if resp.StatusCode >= 400 {
+		if msg, ok := result["error"].(string); ok {
+			return nil, fmt.Errorf("gateway error: %s", msg)
+		}
+		return nil, fmt.Errorf("gateway returned status %d", resp.StatusCode)
+	}
+
+	return result, nil
 }
 
 func authStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show OAuth authentication status",
+		Long:  "Check if ChatGPT OAuth is configured on the running gateway.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tokenPath := oauth.DefaultTokenPath()
-			if !oauth.TokenFileExists(tokenPath) {
-				fmt.Println("No OAuth tokens found.")
-				fmt.Println("Run 'goclaw auth openai' to authenticate.")
-				return nil
-			}
-
-			encKey := os.Getenv("GOCLAW_ENCRYPTION_KEY")
-			ts := oauth.NewTokenSource(tokenPath, encKey)
-			token, err := ts.Token()
+			result, err := gatewayRequest("GET", "/v1/auth/openai/status")
 			if err != nil {
-				fmt.Printf("Token file exists but is invalid: %v\n", err)
-				fmt.Println("Run 'goclaw auth openai' to re-authenticate.")
-				return nil
+				return err
 			}
 
-			// Mask the token for display
-			masked := token
-			if len(token) > 12 {
-				masked = token[:8] + "..." + token[len(token)-4:]
+			if auth, _ := result["authenticated"].(bool); auth {
+				name, _ := result["provider_name"].(string)
+				fmt.Printf("OpenAI OAuth: active (provider: %s)\n", name)
+				fmt.Println("Use model prefix 'openai-codex/' in agent config (e.g. openai-codex/gpt-4o).")
+			} else {
+				fmt.Println("No OAuth tokens found.")
+				fmt.Println("Use the web UI to authenticate with ChatGPT OAuth.")
 			}
-			fmt.Printf("OpenAI OAuth: active\n")
-			fmt.Printf("Token: %s\n", masked)
-			fmt.Printf("Token file: %s\n", tokenPath)
 			return nil
 		},
 	}
@@ -110,14 +111,11 @@ func authLogoutCmd() *cobra.Command {
 				return fmt.Errorf("unknown provider: %s (supported: openai)", provider)
 			}
 
-			tokenPath := oauth.DefaultTokenPath()
-			if err := os.Remove(tokenPath); err != nil {
-				if os.IsNotExist(err) {
-					fmt.Println("No OAuth token found for OpenAI.")
-					return nil
-				}
+			_, err := gatewayRequest("POST", "/v1/auth/openai/logout")
+			if err != nil {
 				return err
 			}
+
 			fmt.Println("OpenAI OAuth token removed.")
 			return nil
 		},

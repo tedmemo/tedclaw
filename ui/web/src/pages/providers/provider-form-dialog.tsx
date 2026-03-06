@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,7 @@ interface ProviderFormDialogProps {
 
 export function ProviderFormDialog({ open, onOpenChange, provider, onSubmit }: ProviderFormDialogProps) {
   const isEdit = !!provider;
+  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [providerType, setProviderType] = useState("openai_compat");
@@ -145,7 +147,7 @@ export function ProviderFormDialog({ open, onOpenChange, provider, onSubmit }: P
                   <Input value="ChatGPT (OAuth)" disabled />
                 </div>
               </div>
-              <OAuthSection onSuccess={() => onOpenChange(false)} />
+              <OAuthSection onSuccess={() => { queryClient.invalidateQueries({ queryKey: ["providers"] }); onOpenChange(false); }} />
             </>
           ) : (
             <>

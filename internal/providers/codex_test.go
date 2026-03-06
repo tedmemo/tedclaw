@@ -19,6 +19,25 @@ func (s *staticTokenSource) Token() (string, error) {
 	return s.token, nil
 }
 
+// mustJSON marshals v to JSON string; panics on error.
+func mustJSON(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// writeSSEDone writes a minimal SSE response with just a completed event and [DONE].
+func writeSSEDone(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(codexSSEEvent{
+		Type:     "response.completed",
+		Response: &codexAPIResponse{ID: "resp-1", Status: "completed"},
+	}))
+	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
 func TestCodexProviderName(t *testing.T) {
 	p := NewCodexProvider("openai-codex", &staticTokenSource{token: "test"}, "", "gpt-4o")
 	if p.Name() != "openai-codex" {
@@ -185,8 +204,8 @@ func TestCodexProviderBuildRequestBodyToolCallMessages(t *testing.T) {
 	if fco["type"] != "function_call_output" {
 		t.Errorf("input[2] type = %v, want function_call_output", fco["type"])
 	}
-	if fco["call_id"] != "call_123" {
-		t.Errorf("input[2] call_id = %v, want call_123", fco["call_id"])
+	if fco["call_id"] != "fc_123" {
+		t.Errorf("input[2] call_id = %v, want fc_123", fco["call_id"])
 	}
 }
 
@@ -235,28 +254,21 @@ func TestCodexProviderChat(t *testing.T) {
 			t.Errorf("request store = %v, want false", body["store"])
 		}
 
-		// Return mock response
-		resp := responsesAPIResponse{
-			ID:     "resp-123",
-			Model:  "gpt-4o",
-			Status: "completed",
-			Output: []responsesItem{
-				{
-					Type: "message",
-					Role: "assistant",
-					Content: []responsesContent{
-						{Type: "output_text", Text: "Hello! I'm doing great."},
-					},
-				},
+		// Return SSE mock response (Chat delegates to ChatStream)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(codexSSEEvent{Type: "response.output_text.delta", Delta: "Hello! I'm doing great."}))
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(codexSSEEvent{
+			Type: "response.output_item.done",
+			Item: &codexItem{Type: "message", Role: "assistant"},
+		}))
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(codexSSEEvent{
+			Type: "response.completed",
+			Response: &codexAPIResponse{
+				ID: "resp-123", Status: "completed",
+				Usage: &codexUsage{InputTokens: 10, OutputTokens: 8, TotalTokens: 18},
 			},
-			Usage: &responsesUsage{
-				InputTokens:  10,
-				OutputTokens: 8,
-				TotalTokens:  18,
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		}))
+		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
 
@@ -381,23 +393,25 @@ func TestCodexProviderChatStreamToolCalls(t *testing.T) {
 
 func TestCodexProviderChatToolCallsNonStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := responsesAPIResponse{
-			ID:     "resp-456",
-			Model:  "gpt-4o",
-			Status: "completed",
-			Output: []responsesItem{
-				{
-					Type:      "function_call",
-					ID:        "item_1",
-					CallID:    "call_xyz",
-					Name:      "search",
-					Arguments: `{"query":"test"}`,
-				},
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(codexSSEEvent{
+			Type: "response.output_item.done",
+			Item: &codexItem{
+				Type:      "function_call",
+				ID:        "item_1",
+				CallID:    "call_xyz",
+				Name:      "search",
+				Arguments: `{"query":"test"}`,
 			},
-			Usage: &responsesUsage{InputTokens: 5, OutputTokens: 3, TotalTokens: 8},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		}))
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(codexSSEEvent{
+			Type: "response.completed",
+			Response: &codexAPIResponse{
+				ID: "resp-456", Status: "completed",
+				Usage: &codexUsage{InputTokens: 5, OutputTokens: 3, TotalTokens: 8},
+			},
+		}))
+		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
 
@@ -508,53 +522,12 @@ func TestCodexProviderStreamReasoning(t *testing.T) {
 	}
 }
 
-func TestCodexProviderParseResponseReasoning(t *testing.T) {
-	p := NewCodexProvider("test", &staticTokenSource{token: "test"}, "", "gpt-4o")
-
-	resp := &responsesAPIResponse{
-		Output: []responsesItem{
-			{
-				Type:    "reasoning",
-				Summary: []responsesSummary{{Type: "summary_text", Text: "Deep thought"}},
-			},
-			{
-				Type: "message",
-				Content: []responsesContent{
-					{Type: "output_text", Text: "42"},
-				},
-			},
-		},
-		Usage: &responsesUsage{
-			InputTokens:  10,
-			OutputTokens: 20,
-			TotalTokens:  30,
-			OutputTokensDetails: &responsesTokensDetails{
-				ReasoningTokens: 15,
-			},
-		},
-	}
-
-	result := p.parseResponse(resp)
-	if result.Thinking != "Deep thought" {
-		t.Errorf("Thinking = %q, want 'Deep thought'", result.Thinking)
-	}
-	if result.Content != "42" {
-		t.Errorf("Content = %q, want '42'", result.Content)
-	}
-	if result.Usage.ThinkingTokens != 15 {
-		t.Errorf("ThinkingTokens = %d, want 15", result.Usage.ThinkingTokens)
-	}
-}
-
 // Verify the endpoint format (apiBase + /responses)
 func TestCodexProviderEndpoint(t *testing.T) {
 	var capturedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
-
-		resp := responsesAPIResponse{ID: "resp-1", Status: "completed"}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		writeSSEDone(w)
 	}))
 	defer server.Close()
 
@@ -575,8 +548,7 @@ func TestCodexProviderAPIBaseTrailingSlash(t *testing.T) {
 	var capturedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
-		resp := responsesAPIResponse{ID: "resp-1", Status: "completed"}
-		json.NewEncoder(w).Encode(resp)
+		writeSSEDone(w)
 	}))
 	defer server.Close()
 
@@ -596,8 +568,7 @@ func TestCodexProviderTokenSource(t *testing.T) {
 	var capturedAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedAuth = r.Header.Get("Authorization")
-		resp := responsesAPIResponse{ID: "resp-1", Status: "completed"}
-		json.NewEncoder(w).Encode(resp)
+		writeSSEDone(w)
 	}))
 	defer server.Close()
 

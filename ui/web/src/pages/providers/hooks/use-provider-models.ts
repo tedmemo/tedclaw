@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useHttp } from "@/hooks/use-ws";
 import { queryKeys } from "@/lib/query-keys";
-import { OAUTH_PROVIDER_ID } from "./use-providers";
 import type { ModelInfo } from "@/types/provider";
 
 export type { ModelInfo };
@@ -19,9 +18,9 @@ const CODEX_MODELS: ModelInfo[] = [
   { id: "gpt-5.1", name: "GPT-5.1" },
 ];
 
-export function useProviderModels(providerId: string | undefined) {
+export function useProviderModels(providerId: string | undefined, providerType?: string) {
   const http = useHttp();
-  const isOAuth = providerId === OAUTH_PROVIDER_ID;
+  const isOAuth = providerType === "chatgpt_oauth";
 
   const { data: models = [], isLoading: loading } = useQuery({
     queryKey: queryKeys.providers.models(providerId ?? ""),

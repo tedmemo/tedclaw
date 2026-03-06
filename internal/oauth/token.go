@@ -1,151 +1,228 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/nextlevelbuilder/goclaw/internal/crypto"
+	"github.com/google/uuid"
+
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
-// TokenFile stores OAuth tokens on disk.
-type TokenFile struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	ExpiresAt    time.Time `json:"expires_at"`
+const (
+	// DefaultProviderName is the provider name for ChatGPT OAuth.
+	DefaultProviderName = "openai-codex"
+
+	// refreshTokenSecretKey is the config_secrets key for the refresh token.
+	refreshTokenSecretKey = "oauth.openai-codex.refresh_token"
+
+	// refreshMargin is how early before expiry we refresh the token.
+	refreshMargin = 5 * time.Minute
+)
+
+// OAuthSettings is stored in llm_providers.settings JSONB (non-sensitive metadata).
+type OAuthSettings struct {
+	ExpiresAt int64  `json:"expires_at"` // unix timestamp
+	Scopes    string `json:"scopes,omitempty"`
 }
 
-// TokenSource provides a valid access token, refreshing automatically if needed.
-type TokenSource struct {
-	path   string // file path for token storage
-	encKey string // encryption key (empty = plaintext)
-	mu     sync.Mutex
-	cached *TokenFile
+// DBTokenSource provides a valid access token backed by the llm_providers + config_secrets tables.
+// Implements providers.TokenSource.
+type DBTokenSource struct {
+	providerStore store.ProviderStore
+	secretsStore  store.ConfigSecretsStore
+	providerName  string
+
+	mu          sync.Mutex
+	cachedToken string
+	expiresAt   time.Time
 }
 
-// NewTokenSource creates a TokenSource that reads/writes tokens from the given path.
-func NewTokenSource(path, encryptionKey string) *TokenSource {
-	return &TokenSource{
-		path:   path,
-		encKey: encryptionKey,
+// NewDBTokenSource creates a DB-backed token source.
+func NewDBTokenSource(provStore store.ProviderStore, secretsStore store.ConfigSecretsStore, providerName string) *DBTokenSource {
+	return &DBTokenSource{
+		providerStore: provStore,
+		secretsStore:  secretsStore,
+		providerName:  providerName,
 	}
 }
 
 // Token returns a valid access token, refreshing if expired or about to expire.
-func (ts *TokenSource) Token() (string, error) {
+func (ts *DBTokenSource) Token() (string, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 
-	// Load from disk if not cached
-	if ts.cached == nil {
-		tf, err := ts.load()
-		if err != nil {
-			return "", fmt.Errorf("load oauth token: %w", err)
-		}
-		ts.cached = tf
+	// Use cached token if still valid
+	if ts.cachedToken != "" && time.Until(ts.expiresAt) > refreshMargin {
+		return ts.cachedToken, nil
 	}
 
-	// Refresh if expired or expiring within 5 minutes
-	if time.Until(ts.cached.ExpiresAt) < 5*time.Minute {
-		slog.Info("refreshing OpenAI OAuth token")
-		oldRefreshToken := ts.cached.RefreshToken
-		newToken, err := RefreshOpenAIToken(oldRefreshToken)
+	ctx := context.Background()
+
+	// Load from DB if not cached
+	if ts.cachedToken == "" {
+		p, err := ts.providerStore.GetProviderByName(ctx, ts.providerName)
 		if err != nil {
+			return "", fmt.Errorf("load oauth provider %q: %w", ts.providerName, err)
+		}
+		ts.cachedToken = p.APIKey
+
+		var settings OAuthSettings
+		if len(p.Settings) > 0 {
+			_ = json.Unmarshal(p.Settings, &settings)
+		}
+		if settings.ExpiresAt > 0 {
+			ts.expiresAt = time.Unix(settings.ExpiresAt, 0)
+		}
+	}
+
+	// Refresh if expired or expiring soon
+	if time.Until(ts.expiresAt) < refreshMargin {
+		if err := ts.refresh(ctx); err != nil {
+			// If refresh fails but we still have a token, return it (might still work)
+			if ts.cachedToken != "" {
+				slog.Warn("oauth token refresh failed, using existing token", "error", err)
+				return ts.cachedToken, nil
+			}
 			return "", fmt.Errorf("refresh oauth token: %w", err)
 		}
-		refreshToken := newToken.RefreshToken
-		if refreshToken == "" {
-			refreshToken = oldRefreshToken // keep old if server didn't issue a new one
-		}
-		ts.cached = &TokenFile{
-			AccessToken:  newToken.AccessToken,
-			RefreshToken: refreshToken,
-			ExpiresAt:    time.Now().Add(time.Duration(newToken.ExpiresIn) * time.Second),
-		}
-		if err := ts.save(ts.cached); err != nil {
-			slog.Warn("failed to save refreshed token", "error", err)
+	}
+
+	return ts.cachedToken, nil
+}
+
+// refresh gets the refresh token from config_secrets, calls RefreshOpenAIToken, and updates DB.
+func (ts *DBTokenSource) refresh(ctx context.Context) error {
+	refreshToken, err := ts.secretsStore.Get(ctx, refreshTokenSecretKey)
+	if err != nil {
+		return fmt.Errorf("get refresh token: %w", err)
+	}
+
+	slog.Info("refreshing OpenAI OAuth token")
+	newToken, err := RefreshOpenAIToken(refreshToken)
+	if err != nil {
+		return err
+	}
+
+	// Update cached values
+	ts.cachedToken = newToken.AccessToken
+	ts.expiresAt = time.Now().Add(time.Duration(newToken.ExpiresIn) * time.Second)
+
+	// Update provider api_key (access token) in DB
+	p, err := ts.providerStore.GetProviderByName(ctx, ts.providerName)
+	if err != nil {
+		return fmt.Errorf("get provider for update: %w", err)
+	}
+
+	settings := OAuthSettings{
+		ExpiresAt: ts.expiresAt.Unix(),
+	}
+	settingsJSON, _ := json.Marshal(settings)
+
+	if err := ts.providerStore.UpdateProvider(ctx, p.ID, map[string]any{
+		"api_key":  newToken.AccessToken,
+		"settings": json.RawMessage(settingsJSON),
+	}); err != nil {
+		slog.Warn("failed to persist refreshed access token", "error", err)
+	}
+
+	// Update refresh token if a new one was issued
+	if newToken.RefreshToken != "" {
+		if err := ts.secretsStore.Set(ctx, refreshTokenSecretKey, newToken.RefreshToken); err != nil {
+			slog.Warn("failed to persist new refresh token", "error", err)
 		}
 	}
 
-	return ts.cached.AccessToken, nil
+	return nil
 }
 
-// Save persists a token response to disk.
-func (ts *TokenSource) Save(resp *OpenAITokenResponse) error {
+// SaveOAuthResult persists OAuth tokens after a successful exchange.
+// Creates or updates the provider in llm_providers and stores refresh token in config_secrets.
+// Returns the provider ID.
+func (ts *DBTokenSource) SaveOAuthResult(ctx context.Context, tokenResp *OpenAITokenResponse) (uuid.UUID, error) {
+	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	settings := OAuthSettings{
+		ExpiresAt: expiresAt.Unix(),
+		Scopes:    tokenResp.Scope,
+	}
+	settingsJSON, _ := json.Marshal(settings)
+
+	// Update cache
 	ts.mu.Lock()
-	defer ts.mu.Unlock()
+	ts.cachedToken = tokenResp.AccessToken
+	ts.expiresAt = expiresAt
+	ts.mu.Unlock()
 
-	tf := &TokenFile{
-		AccessToken:  resp.AccessToken,
-		RefreshToken: resp.RefreshToken,
-		ExpiresAt:    time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second),
+	// Check if provider already exists
+	existing, err := ts.providerStore.GetProviderByName(ctx, ts.providerName)
+	if err == nil {
+		// Update existing provider
+		if err := ts.providerStore.UpdateProvider(ctx, existing.ID, map[string]any{
+			"api_key":  tokenResp.AccessToken,
+			"settings": json.RawMessage(settingsJSON),
+			"enabled":  true,
+		}); err != nil {
+			return uuid.Nil, fmt.Errorf("update provider: %w", err)
+		}
+
+		// Save refresh token
+		if tokenResp.RefreshToken != "" {
+			if err := ts.secretsStore.Set(ctx, refreshTokenSecretKey, tokenResp.RefreshToken); err != nil {
+				return uuid.Nil, fmt.Errorf("save refresh token: %w", err)
+			}
+		}
+
+		return existing.ID, nil
 	}
-	ts.cached = tf
-	return ts.save(tf)
+
+	// Create new provider
+	p := &store.LLMProviderData{
+		Name:         ts.providerName,
+		DisplayName:  "ChatGPT (OAuth)",
+		ProviderType: store.ProviderChatGPTOAuth,
+		APIBase:      "https://chatgpt.com/backend-api",
+		APIKey:       tokenResp.AccessToken,
+		Enabled:      true,
+		Settings:     settingsJSON,
+	}
+	if err := ts.providerStore.CreateProvider(ctx, p); err != nil {
+		return uuid.Nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	// Save refresh token
+	if tokenResp.RefreshToken != "" {
+		if err := ts.secretsStore.Set(ctx, refreshTokenSecretKey, tokenResp.RefreshToken); err != nil {
+			return uuid.Nil, fmt.Errorf("save refresh token: %w", err)
+		}
+	}
+
+	return p.ID, nil
 }
 
-func (ts *TokenSource) save(tf *TokenFile) error {
-	if err := os.MkdirAll(filepath.Dir(ts.path), 0700); err != nil {
-		return err
-	}
+// Delete removes the OAuth provider from DB and its refresh token from config_secrets.
+func (ts *DBTokenSource) Delete(ctx context.Context) error {
+	ts.mu.Lock()
+	ts.cachedToken = ""
+	ts.expiresAt = time.Time{}
+	ts.mu.Unlock()
 
-	data, err := json.Marshal(tf)
+	// Delete refresh token from config_secrets
+	_ = ts.secretsStore.Delete(ctx, refreshTokenSecretKey)
+
+	// Delete provider from llm_providers
+	p, err := ts.providerStore.GetProviderByName(ctx, ts.providerName)
 	if err != nil {
-		return err
+		return nil // already gone
 	}
-
-	// Encrypt if key is available
-	content := string(data)
-	if ts.encKey != "" {
-		encrypted, err := crypto.Encrypt(content, ts.encKey)
-		if err != nil {
-			return fmt.Errorf("encrypt token: %w", err)
-		}
-		content = encrypted
-	}
-
-	return os.WriteFile(ts.path, []byte(content), 0600)
+	return ts.providerStore.DeleteProvider(ctx, p.ID)
 }
 
-func (ts *TokenSource) load() (*TokenFile, error) {
-	data, err := os.ReadFile(ts.path)
-	if err != nil {
-		return nil, err
-	}
-
-	content := string(data)
-
-	// Decrypt if encrypted
-	if crypto.IsEncrypted(content) {
-		if ts.encKey == "" {
-			return nil, fmt.Errorf("token file is encrypted but GOCLAW_ENCRYPTION_KEY is not set")
-		}
-		decrypted, err := crypto.Decrypt(content, ts.encKey)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt token: %w", err)
-		}
-		content = decrypted
-	}
-
-	var tf TokenFile
-	if err := json.Unmarshal([]byte(content), &tf); err != nil {
-		return nil, err
-	}
-	return &tf, nil
-}
-
-// DefaultTokenPath returns the default path for storing OpenAI OAuth tokens.
-func DefaultTokenPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".goclaw", "oauth", "openai.json")
-}
-
-// TokenFileExists returns true if a token file exists at the given path.
-func TokenFileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+// Exists checks if an OAuth provider exists and has a valid token.
+func (ts *DBTokenSource) Exists(ctx context.Context) bool {
+	p, err := ts.providerStore.GetProviderByName(ctx, ts.providerName)
+	return err == nil && p.APIKey != ""
 }

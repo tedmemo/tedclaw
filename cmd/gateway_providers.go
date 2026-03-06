@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"log/slog"
-	"os"
 
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/oauth"
@@ -21,14 +20,6 @@ func registerProviders(registry *providers.Registry, cfg *config.Config) {
 	if cfg.Providers.OpenAI.APIKey != "" {
 		registry.Register(providers.NewOpenAIProvider("openai", cfg.Providers.OpenAI.APIKey, cfg.Providers.OpenAI.APIBase, "gpt-4o"))
 		slog.Info("registered provider", "name", "openai")
-	}
-
-	// OAuth token → register "openai-codex" provider (Responses API wire format)
-	if tokenPath := oauth.DefaultTokenPath(); oauth.TokenFileExists(tokenPath) {
-		encKey := os.Getenv("GOCLAW_ENCRYPTION_KEY")
-		ts := oauth.NewTokenSource(tokenPath, encKey)
-		registry.Register(providers.NewCodexProvider("openai-codex", ts, "", "gpt-5.3-codex"))
-		slog.Info("registered provider via OAuth", "name", "openai-codex")
 	}
 
 	if cfg.Providers.OpenRouter.APIKey != "" {
@@ -94,7 +85,7 @@ func registerProviders(registry *providers.Registry, cfg *config.Config) {
 
 // registerProvidersFromDB loads providers from Postgres and registers them.
 // DB providers are registered after config providers, so they take precedence (overwrite).
-func registerProvidersFromDB(registry *providers.Registry, provStore store.ProviderStore) {
+func registerProvidersFromDB(registry *providers.Registry, provStore store.ProviderStore, secretStore store.ConfigSecretsStore) {
 	ctx := context.Background()
 	dbProviders, err := provStore.ListProviders(ctx)
 	if err != nil {
@@ -105,7 +96,10 @@ func registerProvidersFromDB(registry *providers.Registry, provStore store.Provi
 		if !p.Enabled || p.APIKey == "" {
 			continue
 		}
-		if p.ProviderType == store.ProviderAnthropicNative {
+		if p.ProviderType == store.ProviderChatGPTOAuth {
+			ts := oauth.NewDBTokenSource(provStore, secretStore, p.Name)
+			registry.Register(providers.NewCodexProvider(p.Name, ts, p.APIBase, ""))
+		} else if p.ProviderType == store.ProviderAnthropicNative {
 			registry.Register(providers.NewAnthropicProvider(p.APIKey,
 				providers.WithAnthropicBaseURL(p.APIBase)))
 		} else if p.ProviderType == store.ProviderDashScope {
