@@ -145,7 +145,38 @@ Agents can read these files directly via exec — no copy to `/tmp` needed.
 
 ---
 
-## 6. Adding New Pre-installed Packages
+## 6. Bundled Skills
+
+Skills shipped with the Docker image at `/app/bundled-skills/`. Lowest priority in the loader hierarchy — user-uploaded skills (managed/skills-store) override them.
+
+### Bundled Skills List
+
+| Skill | Purpose |
+|-------|---------|
+| `pdf` | Read, create, merge, split PDFs |
+| `xlsx` | Read, create, edit spreadsheets |
+| `docx` | Read, create, edit Word documents |
+| `pptx` | Read, create, edit presentations |
+| `skill-creator` | Create new skills |
+| `ai-multimodal` | AI-powered media analysis and generation |
+
+### How It Works
+
+1. Skills source files live in `skills/` directory in the repo
+2. Dockerfile copies them to `/app/bundled-skills/` in the image
+3. `gateway.go` passes this path as `builtinSkills` to `skills.NewLoader()`
+4. Loader priority: workspace > project-agents > personal-agents > global > **builtin** > managed
+
+When a user uploads a skill with the same name via the UI, the managed version takes precedence.
+
+### Adding a New Bundled Skill
+
+1. Place skill directory under `skills/<name>/` with `SKILL.md` at root
+2. Rebuild: `docker compose ... up -d --build`
+
+---
+
+## 7. Adding New Pre-installed Packages
 
 To add a new package to the Docker image:
 

@@ -57,9 +57,10 @@ RUN set -eux; \
 RUN adduser -D -u 1000 -h /app goclaw
 WORKDIR /app
 
-# Copy binary and migrations
+# Copy binary, migrations, and bundled skills
 COPY --from=builder /out/goclaw /app/goclaw
 COPY --from=builder /src/migrations/ /app/migrations/
+COPY --from=builder /src/skills/ /app/bundled-skills/
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
