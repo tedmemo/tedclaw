@@ -40,15 +40,17 @@ export function SkillUploadDialog({ open, onOpenChange, onUpload }: SkillUploadD
   const addFiles = async (fileList: FileList) => {
     const newFiles = Array.from(fileList);
 
-    // Build pending list outside updater to avoid StrictMode double-invoke side effects
-    let pending: FileEntry[] = [];
-    setEntries((prev) => {
-      const existingNames = new Set(prev.map((e) => e.file.name));
-      const fresh = newFiles.filter((f) => !existingNames.has(f.name));
-      pending = fresh.map((f) => ({ id: crypto.randomUUID(), file: f, status: "validating" as const }));
-      return [...prev, ...pending];
-    });
-    if (pending.length === 0) return;
+    // Build pending list before setState — no side effects inside updater
+    const existingNames = new Set(entries.map((e) => e.file.name));
+    const fresh = newFiles.filter((f) => !existingNames.has(f.name));
+    if (fresh.length === 0) return;
+
+    const pending: FileEntry[] = fresh.map((f) => ({
+      id: crypto.randomUUID(),
+      file: f,
+      status: "validating" as const,
+    }));
+    setEntries((prev) => [...prev, ...pending]);
 
     // Validate all files concurrently, catch per-file errors
     const results = await Promise.all(
