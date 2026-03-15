@@ -19,21 +19,20 @@ import (
 // APIKeysHandler handles API key management endpoints.
 type APIKeysHandler struct {
 	apiKeys store.APIKeyStore
-	token   string           // gateway token for admin auth
-	msgBus  *bus.MessageBus  // for cache invalidation events
-	allKeys store.APIKeyStore // for API key-based auth
+	token   string          // gateway token for admin auth
+	msgBus  *bus.MessageBus // for cache invalidation events
 }
 
 // NewAPIKeysHandler creates a handler for API key management endpoints.
 func NewAPIKeysHandler(apiKeys store.APIKeyStore, token string, msgBus *bus.MessageBus) *APIKeysHandler {
-	return &APIKeysHandler{apiKeys: apiKeys, token: token, msgBus: msgBus, allKeys: apiKeys}
+	return &APIKeysHandler{apiKeys: apiKeys, token: token, msgBus: msgBus}
 }
 
 // RegisterRoutes registers all API key management routes on the given mux.
 func (h *APIKeysHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/api-keys", h.adminAuth(h.handleList))
 	mux.HandleFunc("POST /v1/api-keys", h.adminAuth(h.handleCreate))
-	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.adminAuth(h.handleRevoke))
+	mux.HandleFunc("POST /v1/api-keys/{id}/revoke", h.adminAuth(h.handleRevoke))
 }
 
 // adminAuth ensures the caller has admin access (gateway token or API key with admin scope).
@@ -49,7 +48,7 @@ func (h *APIKeysHandler) adminAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Try API key with admin scope
-		if key, role := resolveAPIKey(r.Context(), bearer, h.allKeys); key != nil {
+		if key, role := resolveAPIKey(r.Context(), bearer, h.apiKeys); key != nil {
 			if role == permissions.RoleAdmin {
 				next(w, r)
 				return
@@ -58,6 +57,7 @@ func (h *APIKeysHandler) adminAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		// No auth configured = allow (backward compat)
 		if h.token == "" {
+			slog.Warn("security.api_keys_no_auth", "path", r.URL.Path, "remote", r.RemoteAddr)
 			next(w, r)
 			return
 		}
@@ -103,15 +103,8 @@ func (h *APIKeysHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate scopes
-	validScopes := map[string]bool{
-		string(permissions.ScopeAdmin):     true,
-		string(permissions.ScopeRead):      true,
-		string(permissions.ScopeWrite):     true,
-		string(permissions.ScopeApprovals): true,
-		string(permissions.ScopePairing):   true,
-	}
 	for _, s := range input.Scopes {
-		if !validScopes[s] {
+		if !permissions.ValidScope(s) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "invalid scope: "+s)})
 			return
 		}
@@ -143,7 +136,7 @@ func (h *APIKeysHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.apiKeys.Create(r.Context(), key); err != nil {
 		slog.Error("api_keys.create failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgFailedToCreate, "API key", err.Error())})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgFailedToCreate, "API key", "internal error")})
 		return
 	}
 

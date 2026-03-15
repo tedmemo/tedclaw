@@ -19,7 +19,7 @@ func GenerateAPIKey() (raw, hash, displayPrefix string, err error) {
 
 	raw = apiKeyPrefix + hex.EncodeToString(b)
 	hash = HashAPIKey(raw)
-	displayPrefix = raw[:8]
+	displayPrefix = hex.EncodeToString(b[:4]) // first 8 hex chars of the random part
 	return raw, hash, displayPrefix, nil
 }
 

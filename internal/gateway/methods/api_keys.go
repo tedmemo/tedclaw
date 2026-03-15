@@ -72,15 +72,8 @@ func (m *APIKeysMethods) handleCreate(ctx context.Context, client *gateway.Clien
 	}
 
 	// Validate scopes
-	validScopes := map[string]bool{
-		string(permissions.ScopeAdmin):     true,
-		string(permissions.ScopeRead):      true,
-		string(permissions.ScopeWrite):     true,
-		string(permissions.ScopeApprovals): true,
-		string(permissions.ScopePairing):   true,
-	}
 	for _, s := range params.Scopes {
-		if !validScopes[s] {
+		if !permissions.ValidScope(s) {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidRequest, "invalid scope: "+s)))
 			return
 		}
@@ -112,7 +105,7 @@ func (m *APIKeysMethods) handleCreate(ctx context.Context, client *gateway.Clien
 
 	if err := m.apiKeys.Create(ctx, key); err != nil {
 		slog.Error("api_keys.create failed", "error", err)
-		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgFailedToCreate, "API key", err.Error())))
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgFailedToCreate, "API key", "internal error")))
 		return
 	}
 
@@ -134,7 +127,10 @@ func (m *APIKeysMethods) handleRevoke(ctx context.Context, client *gateway.Clien
 		ID string `json:"id"`
 	}
 	if req.Params != nil {
-		json.Unmarshal(req.Params, &params)
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidJSON)))
+			return
+		}
 	}
 
 	id, err := uuid.Parse(params.ID)

@@ -35,7 +35,7 @@ func (s *PGAPIKeyStore) GetByHash(ctx context.Context, keyHash string) (*store.A
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, name, prefix, key_hash, scopes, expires_at, last_used_at, revoked, created_by, created_at, updated_at
 		 FROM api_keys
-		 WHERE key_hash = $1 AND NOT revoked`,
+		 WHERE key_hash = $1 AND NOT revoked AND (expires_at IS NULL OR expires_at > now())`,
 		keyHash,
 	)
 
@@ -51,11 +51,6 @@ func (s *PGAPIKeyStore) GetByHash(ctx context.Context, keyHash string) (*store.A
 	}
 	if createdBy != nil {
 		k.CreatedBy = *createdBy
-	}
-
-	// Check expiration
-	if k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
-		return nil, sql.ErrNoRows
 	}
 
 	return &k, nil

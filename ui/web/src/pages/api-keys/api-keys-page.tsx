@@ -2,6 +2,14 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, RefreshCw, Key, Ban, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -169,26 +177,26 @@ export function ApiKeysPage() {
       />
 
       {/* Show-once key dialog */}
-      {newKeyRaw && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-md rounded-lg border bg-background p-6 shadow-lg">
-            <h3 className="text-lg font-semibold">{t("created.title")}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{t("created.description")}</p>
-            <div className="mt-4 flex items-center gap-2">
-              <code className="flex-1 overflow-x-auto rounded bg-muted px-3 py-2 text-base md:text-sm font-mono break-all">
-                {newKeyRaw}
-              </code>
-              <Button variant="outline" size="sm" onClick={handleCopy} className="gap-1 shrink-0">
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? t("created.copied") : t("created.copy")}
-              </Button>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <Button onClick={() => setNewKeyRaw(null)}>{t("created.done")}</Button>
-            </div>
+      <Dialog open={!!newKeyRaw} onOpenChange={(open) => !open && setNewKeyRaw(null)}>
+        <DialogContent className="max-sm:inset-0 max-sm:translate-x-0 max-sm:translate-y-0 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("created.title")}</DialogTitle>
+            <DialogDescription>{t("created.description")}</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 overflow-x-auto rounded bg-muted px-3 py-2 text-base md:text-sm font-mono break-all">
+              {newKeyRaw}
+            </code>
+            <Button variant="outline" size="sm" onClick={handleCopy} className="gap-1 shrink-0">
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? t("created.copied") : t("created.copy")}
+            </Button>
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button onClick={() => setNewKeyRaw(null)}>{t("created.done")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDeleteDialog
         open={!!revokeTarget}

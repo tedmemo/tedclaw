@@ -39,7 +39,7 @@ export function useApiKeys() {
   const revokeApiKey = useCallback(
     async (id: string) => {
       try {
-        await http.delete(`/v1/api-keys/${id}`);
+        await http.post(`/v1/api-keys/${id}/revoke`, {});
         await invalidate();
         toast.success(i18next.t("api-keys:toast.revoked"));
       } catch (err) {
