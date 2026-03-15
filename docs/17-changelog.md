@@ -31,6 +31,31 @@ All notable changes to GoClaw Gateway are documented here. Format follows [Keep 
   - `internal/http/secure_cli.go` — HTTP endpoints
   - `migrations/000019_secure_cli_binaries.up.sql` — Database schema
 
+#### API Key Management
+- **Multi-key auth**: Multiple API keys with `goclaw_` prefix, SHA-256 hashed storage, show-once pattern
+- **RBAC scopes**: `operator.admin`, `operator.read`, `operator.write`, `operator.approvals`, `operator.pairing`
+- **HTTP + WS**: Full CRUD via `/v1/api-keys` and `api_keys.*` RPC methods
+- **Web UI**: Create dialog with scope checkboxes, expiry options, revoke confirmation
+- **Migration**: `000020_api_keys` — `api_keys` table with partial index on active key hashes
+- **Backward compatible**: Existing gateway token continues to work as admin
+
+#### Interactive API Documentation
+- **Swagger UI** at `/docs` with embedded OpenAPI 3.0 spec at `/v1/openapi.json`
+- **Coverage**: 130+ HTTP endpoints across 18 tag groups
+- **Sidebar link**: API Docs entry in System group (opens in new tab)
+
+### Documentation
+
+- Added `18-http-api.md` — Complete HTTP REST API reference (all endpoints, auth, error codes)
+- Added `19-websocket-rpc.md` — Complete WebSocket RPC method catalog (64+ methods, permission matrix)
+- Added `20-api-keys-auth.md` — API key authentication, RBAC scopes, security model, usage examples
+
+---
+
+## [ACP Provider Release]
+
+### Added
+
 #### ACP Provider (Agent Client Protocol)
 - **New provider**: ACP provider enables orchestration of external coding agents (Claude Code, Codex CLI, Gemini CLI) as JSON-RPC 2.0 subprocesses over stdio
 - **ProcessPool**: Manages subprocess lifecycle with idle TTL reaping and automatic crash recovery

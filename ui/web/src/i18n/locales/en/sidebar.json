@@ -36,6 +36,8 @@
     "nodes": "Nodes",
     "tts": "TTS",
     "activity": "Activity",
-    "cliCredentials": "CLI Credentials"
+    "cliCredentials": "CLI Credentials",
+    "apiKeys": "API Keys",
+    "apiDocs": "API Docs"
   }
 }
