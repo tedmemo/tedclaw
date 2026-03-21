@@ -78,16 +78,16 @@ func (s *PGCronStore) AddJob(ctx context.Context, name string, schedule store.Cr
 
 	s.cacheLoaded = false // invalidate cache
 
-	job, _ := s.GetJob(id.String())
+	job, _ := s.GetJob(ctx, id.String())
 	return job, nil
 }
 
-func (s *PGCronStore) GetJob(jobID string) (*store.CronJob, bool) {
+func (s *PGCronStore) GetJob(ctx context.Context, jobID string) (*store.CronJob, bool) {
 	id, err := uuid.Parse(jobID)
 	if err != nil {
 		return nil, false
 	}
-	job, err := s.scanJob(id)
+	job, err := s.scanJob(ctx, id)
 	if err != nil {
 		return nil, false
 	}
@@ -144,27 +144,57 @@ func (s *PGCronStore) ListJobs(ctx context.Context, includeDisabled bool, agentI
 	return result
 }
 
-func (s *PGCronStore) RemoveJob(jobID string) error {
+func (s *PGCronStore) RemoveJob(ctx context.Context, jobID string) error {
 	id, err := uuid.Parse(jobID)
 	if err != nil {
 		return fmt.Errorf("invalid job ID: %s", jobID)
 	}
-	_, err = s.db.Exec("DELETE FROM cron_jobs WHERE id = $1", id)
+
+	q := "DELETE FROM cron_jobs WHERE id = $1"
+	args := []any{id}
+
+	if !store.IsCrossTenant(ctx) {
+		tid := store.TenantIDFromContext(ctx)
+		if tid != uuid.Nil {
+			q += fmt.Sprintf(" AND tenant_id = $%d", len(args)+1)
+			args = append(args, tid)
+		}
+	}
+
+	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("job not found")
 	}
 	s.cacheLoaded = false
 	return nil
 }
 
-func (s *PGCronStore) EnableJob(jobID string, enabled bool) error {
+func (s *PGCronStore) EnableJob(ctx context.Context, jobID string, enabled bool) error {
 	id, err := uuid.Parse(jobID)
 	if err != nil {
 		return fmt.Errorf("invalid job ID: %s", jobID)
 	}
-	_, err = s.db.Exec("UPDATE cron_jobs SET enabled = $1, updated_at = $2 WHERE id = $3", enabled, time.Now(), id)
+
+	q := "UPDATE cron_jobs SET enabled = $1, updated_at = $2 WHERE id = $3"
+	args := []any{enabled, time.Now(), id}
+
+	if !store.IsCrossTenant(ctx) {
+		tid := store.TenantIDFromContext(ctx)
+		if tid != uuid.Nil {
+			q += fmt.Sprintf(" AND tenant_id = $%d", len(args)+1)
+			args = append(args, tid)
+		}
+	}
+
+	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("job not found")
 	}
 	s.cacheLoaded = false
 	return nil

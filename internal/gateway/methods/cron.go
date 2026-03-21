@@ -113,14 +113,14 @@ func (m *CronMethods) handleDelete(ctx context.Context, client *gateway.Client, 
 	}
 
 	if !canSeeAll(client.Role(), m.cfg.Gateway.OwnerIDs, client.UserID()) {
-		job, ok := m.service.GetJob(params.JobID)
+		job, ok := m.service.GetJob(ctx, params.JobID)
 		if !ok || job.UserID != client.UserID() {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, i18n.T(locale, i18n.MsgPermissionDenied, "cron job")))
 			return
 		}
 	}
 
-	if err := m.service.RemoveJob(params.JobID); err != nil {
+	if err := m.service.RemoveJob(ctx, params.JobID); err != nil {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, err.Error()))
 		return
 	}
@@ -147,14 +147,14 @@ func (m *CronMethods) handleToggle(ctx context.Context, client *gateway.Client, 
 	}
 
 	if !canSeeAll(client.Role(), m.cfg.Gateway.OwnerIDs, client.UserID()) {
-		job, ok := m.service.GetJob(params.JobID)
+		job, ok := m.service.GetJob(ctx, params.JobID)
 		if !ok || job.UserID != client.UserID() {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, i18n.T(locale, i18n.MsgPermissionDenied, "cron job")))
 			return
 		}
 	}
 
-	if err := m.service.EnableJob(params.JobID, params.Enabled); err != nil {
+	if err := m.service.EnableJob(ctx, params.JobID, params.Enabled); err != nil {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, err.Error()))
 		return
 	}
@@ -191,7 +191,7 @@ func (m *CronMethods) handleUpdate(ctx context.Context, client *gateway.Client, 
 	}
 
 	if !canSeeAll(client.Role(), m.cfg.Gateway.OwnerIDs, client.UserID()) {
-		existing, ok := m.service.GetJob(jobID)
+		existing, ok := m.service.GetJob(ctx, jobID)
 		if !ok || existing.UserID != client.UserID() {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, i18n.T(locale, i18n.MsgPermissionDenied, "cron job")))
 			return
@@ -233,7 +233,7 @@ func (m *CronMethods) handleRun(ctx context.Context, client *gateway.Client, req
 	force := params.Mode == "force"
 
 	// Validate job exists before responding
-	job, ok := m.service.GetJob(jobID)
+	job, ok := m.service.GetJob(ctx, jobID)
 	if !ok {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgJobNotFound)))
 		return
@@ -253,14 +253,16 @@ func (m *CronMethods) handleRun(ctx context.Context, client *gateway.Client, req
 	}))
 	emitAudit(m.eventBus, client, "cron.run", "cron", jobID)
 
+	// Use background context for async execution — tenant already verified above.
 	go func() {
-		if _, _, err := m.service.RunJob(jobID, force); err != nil {
+		bgCtx := store.WithCrossTenant(context.Background())
+		if _, _, err := m.service.RunJob(bgCtx, jobID, force); err != nil {
 			slog.Warn("cron.run background error", "jobId", jobID, "error", err)
 		}
 	}()
 }
 
-func (m *CronMethods) handleRuns(_ context.Context, client *gateway.Client, req *protocol.RequestFrame) {
+func (m *CronMethods) handleRuns(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
 	var params struct {
 		JobID  string `json:"jobId"`
 		ID     string `json:"id"`
@@ -276,7 +278,7 @@ func (m *CronMethods) handleRuns(_ context.Context, client *gateway.Client, req 
 		jobID = params.ID
 	}
 
-	entries, total := m.service.GetRunLog(jobID, params.Limit, params.Offset)
+	entries, total := m.service.GetRunLog(ctx, jobID, params.Limit, params.Offset)
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{
 		"entries": entries,
 		"total":   total,
