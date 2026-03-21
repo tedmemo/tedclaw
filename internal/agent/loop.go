@@ -196,7 +196,7 @@ func (l *Loop) runLoop(ctx context.Context, req RunRequest) (*RunResult, error) 
 
 	// Persist agent UUID + user ID on the session (for querying/tracing)
 	if l.agentUUID != uuid.Nil || req.UserID != "" {
-		l.sessions.SetAgentInfo(req.SessionKey, l.agentUUID, req.UserID)
+		l.sessions.SetAgentInfo(ctx, req.SessionKey, l.agentUUID, req.UserID)
 	}
 
 	// Security: scan user message for injection patterns.
@@ -1400,12 +1400,12 @@ func (l *Loop) runLoop(ctx context.Context, req RunRequest) (*RunResult, error) 
 	// Flush all buffered messages to session atomically.
 	// This ensures concurrent runs never see each other's in-progress messages.
 	for _, msg := range pendingMsgs {
-		l.sessions.AddMessage(req.SessionKey, msg)
+		l.sessions.AddMessage(ctx, req.SessionKey, msg)
 	}
 
 	// Persist adaptive tool timing to session metadata.
 	if serialized := toolTiming.Serialize(); serialized != "" {
-		l.sessions.SetSessionMetadata(req.SessionKey, map[string]string{"tool_timing": serialized})
+		l.sessions.SetSessionMetadata(ctx, req.SessionKey, map[string]string{"tool_timing": serialized})
 	}
 
 	// Write session metadata (matching TS session entry updates)
@@ -1420,7 +1420,7 @@ func (l *Loop) runLoop(ctx context.Context, req RunRequest) (*RunResult, error) 
 		l.sessions.SetLastPromptTokens(req.SessionKey, totalUsage.PromptTokens, msgCount)
 	}
 
-	l.sessions.Save(req.SessionKey)
+	l.sessions.Save(ctx, req.SessionKey)
 
 	// Bootstrap auto-cleanup: after enough conversation turns, remove BOOTSTRAP.md
 	// as a safety net in case the LLM didn't clear it itself.

@@ -281,7 +281,7 @@ func (t *SkillManageTool) executePatch(ctx context.Context, args map[string]any)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("invalid skill ID in database: %v", err))
 	}
-	if err := t.skills.UpdateSkill(skillID, map[string]any{
+	if err := t.skills.UpdateSkill(ctx, skillID, map[string]any{
 		"version":    newVer,
 		"file_path":  destDir,
 		"file_size":  fileSize,

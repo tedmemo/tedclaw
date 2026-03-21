@@ -78,7 +78,14 @@ func (s *PGTeamStore) GetTeam(ctx context.Context, teamID uuid.UUID) (*store.Tea
 }
 
 func (s *PGTeamStore) UpdateTeam(ctx context.Context, teamID uuid.UUID, updates map[string]any) error {
-	return execMapUpdate(ctx, s.db, "agent_teams", teamID, updates)
+	if store.IsCrossTenant(ctx) {
+		return execMapUpdate(ctx, s.db, "agent_teams", teamID, updates)
+	}
+	tid := store.TenantIDFromContext(ctx)
+	if tid == uuid.Nil {
+		return execMapUpdate(ctx, s.db, "agent_teams", teamID, updates)
+	}
+	return execMapUpdateWhereTenant(ctx, s.db, "agent_teams", updates, teamID, tid)
 }
 
 func (s *PGTeamStore) DeleteTeam(ctx context.Context, teamID uuid.UUID) error {

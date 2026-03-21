@@ -214,7 +214,14 @@ func (s *PGMCPServerStore) UpdateServer(ctx context.Context, id uuid.UUID, updat
 		}
 	}
 	updates["updated_at"] = time.Now()
-	return execMapUpdate(ctx, s.db, "mcp_servers", id, updates)
+	if store.IsCrossTenant(ctx) {
+		return execMapUpdate(ctx, s.db, "mcp_servers", id, updates)
+	}
+	tid := store.TenantIDFromContext(ctx)
+	if tid == uuid.Nil {
+		return execMapUpdate(ctx, s.db, "mcp_servers", id, updates)
+	}
+	return execMapUpdateWhereTenant(ctx, s.db, "mcp_servers", updates, id, tid)
 }
 
 func (s *PGMCPServerStore) DeleteServer(ctx context.Context, id uuid.UUID) error {

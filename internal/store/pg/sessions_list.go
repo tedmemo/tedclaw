@@ -2,7 +2,6 @@ package pg
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -55,17 +54,34 @@ func buildSessionFilter(opts store.SessionListOpts, tableAlias string) (string, 
 	return " WHERE " + strings.Join(conditions, " AND "), args
 }
 
-func (s *PGSessionStore) List(agentID string) []store.SessionInfo {
-	var rows *sql.Rows
-	var err error
+func (s *PGSessionStore) List(ctx context.Context, agentID string) []store.SessionInfo {
+	var conditions []string
+	var args []any
+	idx := 1
+
 	if agentID != "" {
-		prefix := "agent:" + agentID + ":%"
-		rows, err = s.db.Query(
-			"SELECT session_key, messages, created_at, updated_at, label, channel, user_id, COALESCE(metadata, '{}') FROM sessions WHERE session_key LIKE $1 ORDER BY updated_at DESC", prefix)
-	} else {
-		rows, err = s.db.Query(
-			"SELECT session_key, messages, created_at, updated_at, label, channel, user_id, COALESCE(metadata, '{}') FROM sessions ORDER BY updated_at DESC")
+		conditions = append(conditions, fmt.Sprintf("session_key LIKE $%d", idx))
+		args = append(args, "agent:"+agentID+":%")
+		idx++
 	}
+	if !store.IsCrossTenant(ctx) {
+		tid := store.TenantIDFromContext(ctx)
+		if tid != uuid.Nil {
+			conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", idx))
+			args = append(args, tid)
+			idx++
+		}
+	}
+	_ = idx
+
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT session_key, messages, created_at, updated_at, label, channel, user_id, COALESCE(metadata, '{}') FROM sessions"+where+" ORDER BY updated_at DESC",
+		args...)
 	if err != nil {
 		return nil
 	}
@@ -245,7 +261,7 @@ func (s *PGSessionStore) ListPagedRich(opts store.SessionListOpts) store.Session
 	return store.SessionListRichResult{Sessions: result, Total: total}
 }
 
-func (s *PGSessionStore) Save(key string) error {
+func (s *PGSessionStore) Save(ctx context.Context, key string) error {
 	s.mu.RLock()
 	data, ok := s.cache[key]
 	if !ok {
@@ -265,7 +281,7 @@ func (s *PGSessionStore) Save(key string) error {
 		metaJSON, _ = json.Marshal(snapshot.Metadata)
 	}
 
-	_, err := s.db.Exec(
+	_, err := s.db.ExecContext(ctx,
 		`UPDATE sessions SET
 			messages = $1, summary = $2, model = $3, provider = $4, channel = $5,
 			input_tokens = $6, output_tokens = $7, compaction_count = $8,

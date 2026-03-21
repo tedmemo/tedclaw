@@ -102,11 +102,11 @@ func (s *PGSessionStore) GetOrCreate(ctx context.Context, key string) *store.Ses
 	return data
 }
 
-func (s *PGSessionStore) AddMessage(key string, msg providers.Message) {
+func (s *PGSessionStore) AddMessage(ctx context.Context, key string, msg providers.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data := s.getOrInit(context.Background(), key)
+	data := s.getOrInit(ctx, key)
 	data.Messages = append(data.Messages, msg)
 	data.Updated = time.Now()
 }
@@ -189,10 +189,10 @@ func (s *PGSessionStore) GetSessionMetadata(key string) map[string]string {
 	return nil
 }
 
-func (s *PGSessionStore) SetSessionMetadata(key string, metadata map[string]string) {
+func (s *PGSessionStore) SetSessionMetadata(ctx context.Context, key string, metadata map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.getOrInit(context.Background(), key)
+	data := s.getOrInit(ctx, key)
 	if data.Metadata == nil {
 		data.Metadata = make(map[string]string)
 	}
@@ -200,10 +200,10 @@ func (s *PGSessionStore) SetSessionMetadata(key string, metadata map[string]stri
 	data.Updated = time.Now()
 }
 
-func (s *PGSessionStore) SetAgentInfo(key string, agentUUID uuid.UUID, userID string) {
+func (s *PGSessionStore) SetAgentInfo(ctx context.Context, key string, agentUUID uuid.UUID, userID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.getOrInit(context.Background(), key)
+	data := s.getOrInit(ctx, key)
 	if agentUUID != uuid.Nil {
 		data.AgentUUID = agentUUID
 	}

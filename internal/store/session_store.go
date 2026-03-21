@@ -89,13 +89,13 @@ type SessionListRichResult struct {
 // SessionStore manages conversation sessions.
 type SessionStore interface {
 	GetOrCreate(ctx context.Context, key string) *SessionData
-	AddMessage(key string, msg providers.Message)
+	AddMessage(ctx context.Context, key string, msg providers.Message)
 	GetHistory(key string) []providers.Message
 	GetSummary(key string) string
 	SetSummary(key, summary string)
 	GetLabel(key string) string
 	SetLabel(key, label string)
-	SetAgentInfo(key string, agentUUID uuid.UUID, userID string)
+	SetAgentInfo(ctx context.Context, key string, agentUUID uuid.UUID, userID string)
 	UpdateMetadata(key, model, provider, channel string)
 	AccumulateTokens(key string, input, output int64)
 	IncrementCompaction(key string)
@@ -103,7 +103,7 @@ type SessionStore interface {
 	GetMemoryFlushCompactionCount(key string) int
 	SetMemoryFlushDone(key string)
 	GetSessionMetadata(key string) map[string]string
-	SetSessionMetadata(key string, metadata map[string]string)
+	SetSessionMetadata(ctx context.Context, key string, metadata map[string]string)
 	SetSpawnInfo(key, spawnedBy string, depth int)
 	SetContextWindow(key string, cw int)
 	GetContextWindow(key string) int
@@ -113,9 +113,9 @@ type SessionStore interface {
 	SetHistory(key string, msgs []providers.Message)
 	Reset(key string)
 	Delete(key string) error
-	List(agentID string) []SessionInfo
+	List(ctx context.Context, agentID string) []SessionInfo
 	ListPaged(opts SessionListOpts) SessionListResult
 	ListPagedRich(opts SessionListOpts) SessionListRichResult
-	Save(key string) error
+	Save(ctx context.Context, key string) error
 	LastUsedChannel(agentID string) (channel, chatID string)
 }

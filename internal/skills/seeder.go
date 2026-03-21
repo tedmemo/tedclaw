@@ -20,7 +20,7 @@ type SystemSkillStore interface {
 	UpsertSystemSkill(ctx context.Context, p pg.SkillCreateParams) (uuid.UUID, bool, string, error)
 	GetNextVersion(slug string) int
 	BumpVersion()
-	UpdateSkill(id uuid.UUID, updates map[string]interface{}) error
+	UpdateSkill(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error
 	StoreMissingDeps(id uuid.UUID, missing []string) error
 }
 
@@ -176,7 +176,7 @@ func (s *Seeder) CheckDepsAsync(skills []seededSkill, msgBus *bus.MessageBus) {
 			status := "active"
 			if !ok {
 				status = "archived"
-				_ = s.store.UpdateSkill(sk.id, map[string]interface{}{"status": "archived"})
+				_ = s.store.UpdateSkill(context.Background(), sk.id, map[string]interface{}{"status": "archived"})
 				s.store.BumpVersion()
 				slog.Warn("seeder: skill deps missing", "slug", sk.slug, "missing", FormatMissing(missing))
 			}

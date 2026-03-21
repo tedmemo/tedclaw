@@ -219,7 +219,14 @@ func (s *PGChannelInstanceStore) Update(ctx context.Context, id uuid.UUID, updat
 		updates["credentials"] = credsBytes
 	}
 	updates["updated_at"] = time.Now()
-	return execMapUpdate(ctx, s.db, "channel_instances", id, updates)
+	if store.IsCrossTenant(ctx) {
+		return execMapUpdate(ctx, s.db, "channel_instances", id, updates)
+	}
+	tid := store.TenantIDFromContext(ctx)
+	if tid == uuid.Nil {
+		return execMapUpdate(ctx, s.db, "channel_instances", id, updates)
+	}
+	return execMapUpdateWhereTenant(ctx, s.db, "channel_instances", updates, id, tid)
 }
 
 // loadExistingCreds reads and decrypts the current credentials for merging.

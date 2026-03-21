@@ -39,8 +39,19 @@ func (s *PGSkillStore) CreateSkill(name, slug string, description *string, owner
 	return err
 }
 
-func (s *PGSkillStore) UpdateSkill(id uuid.UUID, updates map[string]any) error {
-	if err := execMapUpdate(context.Background(), s.db, "skills", id, updates); err != nil {
+func (s *PGSkillStore) UpdateSkill(ctx context.Context, id uuid.UUID, updates map[string]any) error {
+	var err error
+	if store.IsCrossTenant(ctx) {
+		err = execMapUpdate(ctx, s.db, "skills", id, updates)
+	} else {
+		tid := store.TenantIDFromContext(ctx)
+		if tid == uuid.Nil {
+			err = execMapUpdate(ctx, s.db, "skills", id, updates)
+		} else {
+			err = execMapUpdateWhereTenant(ctx, s.db, "skills", updates, id, tid)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	s.BumpVersion()

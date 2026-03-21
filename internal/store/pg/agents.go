@@ -488,7 +488,7 @@ func execMapUpdateWhereTenant(ctx context.Context, db *sql.DB, table string, upd
 	}
 	// $i = id, $i+1 = tenantID
 	args = append(args, id, tenantID)
-	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = $%d AND deleted_at IS NULL AND tenant_id = $%d",
+	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = $%d AND tenant_id = $%d",
 		table, joinStrings(setClauses, ", "), i, i+1)
 	_, err := db.ExecContext(ctx, q, args...)
 	return err

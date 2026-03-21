@@ -101,7 +101,7 @@ type CronStore interface {
 	GetJob(jobID string) (*CronJob, bool)
 	ListJobs(ctx context.Context, includeDisabled bool, agentID, userID string) []CronJob
 	RemoveJob(jobID string) error
-	UpdateJob(jobID string, patch CronJobPatch) (*CronJob, error)
+	UpdateJob(ctx context.Context, jobID string, patch CronJobPatch) (*CronJob, error)
 	EnableJob(jobID string, enabled bool) error
 	GetRunLog(jobID string, limit, offset int) ([]CronRunLogEntry, int)
 	Status() map[string]any

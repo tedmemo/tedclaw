@@ -47,7 +47,14 @@ func (s *PGTracingStore) CreateTrace(ctx context.Context, trace *store.TraceData
 }
 
 func (s *PGTracingStore) UpdateTrace(ctx context.Context, traceID uuid.UUID, updates map[string]any) error {
-	return execMapUpdate(ctx, s.db, "traces", traceID, updates)
+	if store.IsCrossTenant(ctx) {
+		return execMapUpdate(ctx, s.db, "traces", traceID, updates)
+	}
+	tid := store.TenantIDFromContext(ctx)
+	if tid == uuid.Nil {
+		return execMapUpdate(ctx, s.db, "traces", traceID, updates)
+	}
+	return execMapUpdateWhereTenant(ctx, s.db, "traces", updates, traceID, tid)
 }
 
 func (s *PGTracingStore) GetTrace(ctx context.Context, traceID uuid.UUID) (*store.TraceData, error) {

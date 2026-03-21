@@ -193,7 +193,14 @@ func (s *PGSecureCLIStore) Update(ctx context.Context, id uuid.UUID, updates map
 		}
 	}
 	updates["updated_at"] = time.Now()
-	return execMapUpdate(ctx, s.db, "secure_cli_binaries", id, updates)
+	if store.IsCrossTenant(ctx) {
+		return execMapUpdate(ctx, s.db, "secure_cli_binaries", id, updates)
+	}
+	tid := store.TenantIDFromContext(ctx)
+	if tid == uuid.Nil {
+		return execMapUpdate(ctx, s.db, "secure_cli_binaries", id, updates)
+	}
+	return execMapUpdateWhereTenant(ctx, s.db, "secure_cli_binaries", updates, id, tid)
 }
 
 func (s *PGSecureCLIStore) Delete(ctx context.Context, id uuid.UUID) error {

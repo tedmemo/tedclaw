@@ -80,7 +80,14 @@ func (s *PGAgentLinkStore) UpdateLink(ctx context.Context, id uuid.UUID, updates
 		return nil
 	}
 	updates["updated_at"] = time.Now()
-	return execMapUpdate(ctx, s.db, "agent_links", id, updates)
+	if store.IsCrossTenant(ctx) {
+		return execMapUpdate(ctx, s.db, "agent_links", id, updates)
+	}
+	tid := store.TenantIDFromContext(ctx)
+	if tid == uuid.Nil {
+		return execMapUpdate(ctx, s.db, "agent_links", id, updates)
+	}
+	return execMapUpdateWhereTenant(ctx, s.db, "agent_links", updates, id, tid)
 }
 
 func (s *PGAgentLinkStore) GetLink(ctx context.Context, id uuid.UUID) (*store.AgentLinkData, error) {

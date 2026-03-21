@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -114,7 +115,7 @@ func (h *SkillsHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	delete(updates, "is_system")
 	delete(updates, "enabled")
 
-	if err := h.skills.UpdateSkill(id, updates); err != nil {
+	if err := h.skills.UpdateSkill(r.Context(), id, updates); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -204,7 +205,7 @@ func (h *SkillsHandler) handleInstallDeps(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		if ok && sk.Status == "archived" {
-			_ = h.skills.UpdateSkill(id, map[string]any{"status": "active"})
+			_ = h.skills.UpdateSkill(r.Context(), id, map[string]any{"status": "active"})
 			h.skills.BumpVersion()
 		}
 		status := "active"
@@ -298,11 +299,11 @@ func (h *SkillsHandler) rescanAndUpdate() (updated int, results []depResult) {
 
 		switch {
 		case ok && sk.Status == "archived":
-			_ = h.skills.UpdateSkill(id, map[string]any{"status": "active"})
+			_ = h.skills.UpdateSkill(context.Background(), id, map[string]any{"status": "active"})
 			results = append(results, depResult{Slug: sk.Slug, Status: "active"})
 			updated++
 		case !ok && sk.Status == "active":
-			_ = h.skills.UpdateSkill(id, map[string]any{"status": "archived"})
+			_ = h.skills.UpdateSkill(context.Background(), id, map[string]any{"status": "archived"})
 			results = append(results, depResult{Slug: sk.Slug, Status: "archived", Missing: missing})
 			updated++
 		case !ok:
@@ -374,7 +375,7 @@ func (h *SkillsHandler) handleToggle(w http.ResponseWriter, r *http.Request) {
 			} else {
 				newStatus = "active"
 			}
-			_ = h.skills.UpdateSkill(id, map[string]any{"status": newStatus})
+			_ = h.skills.UpdateSkill(r.Context(), id, map[string]any{"status": newStatus})
 		}
 	}
 

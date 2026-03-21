@@ -83,7 +83,7 @@ func (m *Manager) GetOrCreate(_ context.Context, key string) *Session {
 }
 
 // AddMessage appends a message to a session.
-func (m *Manager) AddMessage(key string, msg providers.Message) {
+func (m *Manager) AddMessage(_ context.Context, key string, msg providers.Message) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -319,7 +319,7 @@ func (m *Manager) Delete(key string) error {
 }
 
 // List returns metadata for all sessions, optionally filtered by agent ID.
-func (m *Manager) List(agentID string) []SessionInfo {
+func (m *Manager) List(_ context.Context, agentID string) []SessionInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -393,7 +393,7 @@ type SessionInfo struct {
 }
 
 // Save persists a session to disk atomically.
-func (m *Manager) Save(key string) error {
+func (m *Manager) Save(_ context.Context, key string) error {
 	if m.storage == "" {
 		return nil
 	}

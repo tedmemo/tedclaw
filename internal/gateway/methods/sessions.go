@@ -140,11 +140,11 @@ func (m *SessionsMethods) handlePatch(ctx context.Context, client *gateway.Clien
 
 	// Apply metadata patch
 	if len(params.Metadata) > 0 {
-		m.sessions.SetSessionMetadata(params.Key, params.Metadata)
+		m.sessions.SetSessionMetadata(ctx, params.Key, params.Metadata)
 	}
 
 	// Save changes to DB
-	m.sessions.Save(params.Key)
+	m.sessions.Save(ctx, params.Key)
 
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{
 		"ok":  true,

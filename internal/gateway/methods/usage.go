@@ -50,7 +50,7 @@ func (m *UsageMethods) handleGet(ctx context.Context, client *gateway.Client, re
 		params.Limit = 20
 	}
 
-	sessions := m.sessions.List(params.AgentID)
+	sessions := m.sessions.List(ctx, params.AgentID)
 
 	records := make([]UsageRecord, 0, len(sessions))
 	for _, s := range sessions {
@@ -96,7 +96,7 @@ func (m *UsageMethods) handleGet(ctx context.Context, client *gateway.Client, re
 }
 
 func (m *UsageMethods) handleSummary(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
-	sessions := m.sessions.List("") // all agents
+	sessions := m.sessions.List(ctx, "") // all agents
 
 	type agentSummary struct {
 		InputTokens  int64 `json:"inputTokens"`

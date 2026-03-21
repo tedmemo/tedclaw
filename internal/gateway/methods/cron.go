@@ -198,7 +198,7 @@ func (m *CronMethods) handleUpdate(ctx context.Context, client *gateway.Client, 
 		}
 	}
 
-	job, err := m.service.UpdateJob(jobID, params.Patch)
+	job, err := m.service.UpdateJob(ctx, jobID, params.Patch)
 	if err != nil {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, err.Error()))
 		return

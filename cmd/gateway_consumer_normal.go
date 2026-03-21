@@ -96,7 +96,7 @@ func processNormalMessage(
 	// Persist friendly names from channel metadata into session + user profile.
 	sessionMeta := extractSessionMetadata(msg, peerKind)
 	if len(sessionMeta) > 0 {
-		sessStore.SetSessionMetadata(sessionKey, sessionMeta)
+		sessStore.SetSessionMetadata(ctx, sessionKey, sessionMeta)
 		if agentStore != nil {
 			if agentUUID, err := uuid.Parse(agentID); err == nil && agentUUID != uuid.Nil {
 				_ = agentStore.UpdateUserProfileMetadata(ctx, agentUUID, userID, sessionMeta)

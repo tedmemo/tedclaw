@@ -160,7 +160,7 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *Result {
 	case "add":
 		return t.handleAdd(ctx, args, agentID, userID)
 	case "update":
-		return t.handleUpdate(args, agentID, userID)
+		return t.handleUpdate(ctx, args, agentID, userID)
 	case "remove":
 		return t.handleRemove(args, agentID, userID)
 	case "run":
@@ -296,7 +296,7 @@ func (t *CronTool) handleAdd(ctx context.Context, args map[string]any, agentID, 
 	// Set wake_heartbeat if requested (triggers heartbeat after cron job completes)
 	if wh, _ := jobObj["wake_heartbeat"].(bool); wh {
 		wakeTrue := true
-		if updated, uErr := t.cronStore.UpdateJob(job.ID, store.CronJobPatch{WakeHeartbeat: &wakeTrue}); uErr == nil {
+		if updated, uErr := t.cronStore.UpdateJob(ctx, job.ID, store.CronJobPatch{WakeHeartbeat: &wakeTrue}); uErr == nil {
 			job = updated
 		}
 	}
@@ -324,7 +324,7 @@ func (t *CronTool) checkJobOwnership(jobID, agentID, userID string) (*store.Cron
 	return job, nil
 }
 
-func (t *CronTool) handleUpdate(args map[string]any, agentID, userID string) *Result {
+func (t *CronTool) handleUpdate(ctx context.Context, args map[string]any, agentID, userID string) *Result {
 	jobID := resolveJobID(args)
 	if jobID == "" {
 		return ErrorResult("jobId is required for update action")
@@ -351,7 +351,7 @@ func (t *CronTool) handleUpdate(args map[string]any, agentID, userID string) *Re
 		}
 	}
 
-	job, err := t.cronStore.UpdateJob(jobID, patch)
+	job, err := t.cronStore.UpdateJob(ctx, jobID, patch)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to update cron job: %v", err))
 	}

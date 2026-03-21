@@ -12,7 +12,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
-func (s *PGCronStore) UpdateJob(jobID string, patch store.CronJobPatch) (*store.CronJob, error) {
+func (s *PGCronStore) UpdateJob(ctx context.Context, jobID string, patch store.CronJobPatch) (*store.CronJob, error) {
 	id, err := uuid.Parse(jobID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid job ID: %s", jobID)
@@ -178,7 +178,18 @@ func (s *PGCronStore) UpdateJob(jobID string, patch store.CronJobPatch) (*store.
 
 	updates["updated_at"] = time.Now()
 
-	if err := execMapUpdate(context.Background(), s.db, "cron_jobs", id, updates); err != nil {
+	var execErr error
+	if store.IsCrossTenant(ctx) {
+		execErr = execMapUpdate(ctx, s.db, "cron_jobs", id, updates)
+	} else {
+		tid := store.TenantIDFromContext(ctx)
+		if tid == uuid.Nil {
+			execErr = execMapUpdate(ctx, s.db, "cron_jobs", id, updates)
+		} else {
+			execErr = execMapUpdateWhereTenant(ctx, s.db, "cron_jobs", updates, id, tid)
+		}
+	}
+	if err := execErr; err != nil {
 		return nil, err
 	}
 
