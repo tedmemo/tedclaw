@@ -99,34 +99,13 @@ export function TenantDetailPage() {
     <div className="p-4 sm:p-6 space-y-6">
       <PageHeader
         title={tenant?.name ?? t("detail")}
-        description={tenant ? `${tenant.slug} · ${t(tenant.status) || tenant.status}` : ""}
+        description={tenant ? `${tenant.slug} · ${new Date(tenant.created_at).toLocaleDateString()}` : ""}
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.TENANTS)} className="gap-1">
-              <ArrowLeft className="h-3.5 w-3.5" /> {t("back")}
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.TENANTS)} className="gap-1">
+            <ArrowLeft className="h-3.5 w-3.5" /> {t("back")}
+          </Button>
         }
       />
-
-      {tenant && (
-        <div className="rounded-md border p-4 text-base md:text-sm space-y-1">
-          <div className="flex gap-2 items-center">
-            <span className="text-muted-foreground w-20">{t("slug")}:</span>
-            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{tenant.slug}</code>
-          </div>
-          <div className="flex gap-2 items-center">
-            <span className="text-muted-foreground w-20">{t("status")}:</span>
-            <Badge variant={tenant.status === "active" ? "default" : tenant.status === "suspended" ? "destructive" : "secondary"}>
-              {t(tenant.status) || tenant.status}
-            </Badge>
-          </div>
-          <div className="flex gap-2 items-center">
-            <span className="text-muted-foreground w-20">{t("created")}:</span>
-            <span>{new Date(tenant.created_at).toLocaleString()}</span>
-          </div>
-        </div>
-      )}
 
       <div>
         <div className="flex items-center justify-between mb-3">
