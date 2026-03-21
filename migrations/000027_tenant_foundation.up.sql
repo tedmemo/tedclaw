@@ -222,6 +222,26 @@ CREATE TABLE skill_tenant_configs (
 CREATE INDEX idx_skill_tenant_configs_tenant ON skill_tenant_configs(tenant_id);
 
 -- ============================================================
+-- Phase J: MCP per-user credentials
+-- ============================================================
+
+CREATE TABLE mcp_user_credentials (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    server_id  UUID NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+    user_id    VARCHAR(255) NOT NULL,
+    api_key    TEXT,
+    headers    BYTEA,
+    env        BYTEA,
+    tenant_id  UUID NOT NULL REFERENCES tenants(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(server_id, user_id, tenant_id)
+);
+
+CREATE INDEX idx_mcp_user_credentials_tenant ON mcp_user_credentials(tenant_id);
+CREATE INDEX idx_mcp_user_credentials_server ON mcp_user_credentials(server_id);
+
+-- ============================================================
 -- Phase I: Update UNIQUE constraints to include tenant_id
 -- Allows same name/key/slug across different tenants.
 -- ============================================================

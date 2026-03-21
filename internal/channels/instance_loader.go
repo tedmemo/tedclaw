@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
@@ -233,6 +235,10 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 	// Set the platform type on the channel so Manager.ChannelTypeForName can read it.
 	if base, ok := ch.(interface{ SetType(string) }); ok {
 		base.SetType(inst.ChannelType)
+	}
+	// Propagate tenant_id from DB instance to channel for tenant-scoped message handling.
+	if base, ok := ch.(interface{ SetTenantID(uuid.UUID) }); ok {
+		base.SetTenantID(inst.TenantID)
 	}
 
 	// Wire pending message auto-compaction.

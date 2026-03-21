@@ -114,7 +114,7 @@ func wireExtras(
 	// 5. Shared MCP connection pool (eliminates duplicate connections across agents)
 	var mcpPool *mcpbridge.Pool
 	if stores.MCP != nil {
-		mcpPool = mcpbridge.NewPool()
+		mcpPool = mcpbridge.NewPool(mcpbridge.DefaultPoolConfig())
 	}
 
 	// 6. Set up agent resolver: lazy-creates Loops from DB

@@ -28,7 +28,7 @@ func NewPGChannelInstanceStore(db *sql.DB, encryptionKey string) *PGChannelInsta
 }
 
 const channelInstanceSelectCols = `id, name, display_name, channel_type, agent_id,
- credentials, config, enabled, created_by, created_at, updated_at`
+ credentials, config, enabled, created_by, created_at, updated_at, tenant_id`
 
 func (s *PGChannelInstanceStore) Create(ctx context.Context, inst *store.ChannelInstanceData) error {
 	if err := store.ValidateUserID(inst.CreatedBy); err != nil {
@@ -109,7 +109,7 @@ func (s *PGChannelInstanceStore) scanInstance(row *sql.Row) (*store.ChannelInsta
 	err := row.Scan(
 		&inst.ID, &inst.Name, &displayName, &inst.ChannelType, &inst.AgentID,
 		&creds, &config,
-		&inst.Enabled, &inst.CreatedBy, &inst.CreatedAt, &inst.UpdatedAt,
+		&inst.Enabled, &inst.CreatedBy, &inst.CreatedAt, &inst.UpdatedAt, &inst.TenantID,
 	)
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func (s *PGChannelInstanceStore) scanInstances(rows *sql.Rows) ([]store.ChannelI
 		if err := rows.Scan(
 			&inst.ID, &inst.Name, &displayName, &inst.ChannelType, &inst.AgentID,
 			&creds, &config,
-			&inst.Enabled, &inst.CreatedBy, &inst.CreatedAt, &inst.UpdatedAt,
+			&inst.Enabled, &inst.CreatedBy, &inst.CreatedAt, &inst.UpdatedAt, &inst.TenantID,
 		); err != nil {
 			continue
 		}

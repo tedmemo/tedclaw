@@ -50,6 +50,7 @@ type Server struct {
 	builtinToolsHandler     *httpapi.BuiltinToolsHandler     // builtin tool management API
 	pendingMessagesHandler  *httpapi.PendingMessagesHandler  // pending messages API
 	secureCLIHandler       *httpapi.SecureCLIHandler        // secure CLI credential CRUD API
+	mcpUserCredsHandler    *httpapi.MCPUserCredentialsHandler // MCP per-user credentials API
 	packagesHandler        *httpapi.PackagesHandler         // runtime package management API
 	memoryHandler           *httpapi.MemoryHandler           // memory management API
 	kgHandler               *httpapi.KnowledgeGraphHandler   // knowledge graph API
@@ -205,6 +206,10 @@ func (s *Server) BuildMux() *http.ServeMux {
 	// MCP server management API
 	if s.mcpHandler != nil {
 		s.mcpHandler.RegisterRoutes(mux)
+	}
+	// MCP per-user credentials API
+	if s.mcpUserCredsHandler != nil {
+		s.mcpUserCredsHandler.RegisterRoutes(mux)
 	}
 
 	// Secure CLI credential CRUD API
@@ -480,7 +485,8 @@ func (s *Server) SetTracesHandler(h *httpapi.TracesHandler) { s.tracesHandler = 
 func (s *Server) SetWakeHandler(h *httpapi.WakeHandler) { s.wakeHandler = h }
 
 // SetMCPHandler sets the MCP server management handler.
-func (s *Server) SetMCPHandler(h *httpapi.MCPHandler) { s.mcpHandler = h }
+func (s *Server) SetMCPHandler(h *httpapi.MCPHandler)                       { s.mcpHandler = h }
+func (s *Server) SetMCPUserCredentialsHandler(h *httpapi.MCPUserCredentialsHandler) { s.mcpUserCredsHandler = h }
 
 // SetChannelInstancesHandler sets the channel instance CRUD handler.
 func (s *Server) SetChannelInstancesHandler(h *httpapi.ChannelInstancesHandler) {

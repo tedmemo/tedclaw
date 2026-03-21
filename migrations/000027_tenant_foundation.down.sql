@@ -41,6 +41,7 @@ CREATE UNIQUE INDEX idx_usage_snapshots_unique ON usage_snapshots (
 );
 
 -- Drop new tables
+DROP TABLE IF EXISTS mcp_user_credentials;
 DROP TABLE IF EXISTS skill_tenant_configs;
 DROP TABLE IF EXISTS builtin_tool_tenant_configs;
 DROP TABLE IF EXISTS tenant_users;

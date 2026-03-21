@@ -76,6 +76,7 @@ type Manager struct {
 	pool          *Pool
 	poolServers   map[string]struct{}  // server names acquired from pool (for cleanup)
 	poolToolNames map[string][]string  // per-agent tool names for pool-backed servers
+	poolKeys      map[string]string   // server name → pool compound key (tenantID/name) for Release
 
 	// Search mode: deferred tools not registered in registry
 	deferredTools  map[string]*BridgeTool // registeredName → BridgeTool
@@ -171,9 +172,53 @@ func (m *Manager) LoadForAgent(ctx context.Context, agentID uuid.UUID, userID st
 		env := jsonBytesToStringMap(srv.Env)
 		headers := jsonBytesToStringMap(srv.Headers)
 
-		if m.pool != nil {
+		// Inject APIKey into headers if present (bug fix: was never passed to connections)
+		if srv.APIKey != "" && headers["Authorization"] == "" {
+			if headers == nil {
+				headers = make(map[string]string)
+			}
+			headers["Authorization"] = "Bearer " + srv.APIKey
+		}
+
+		// Merge per-user credentials (user overrides server defaults)
+		if userID != "" && m.store != nil {
+			if userCreds, err := m.store.GetUserCredentials(ctx, srv.ID, userID); err == nil && userCreds != nil {
+				if userCreds.APIKey != "" {
+					if headers == nil {
+						headers = make(map[string]string)
+					}
+					headers["Authorization"] = "Bearer " + userCreds.APIKey
+				}
+				for k, v := range userCreds.Headers {
+					if headers == nil {
+						headers = make(map[string]string)
+					}
+					headers[k] = v
+				}
+				for k, v := range userCreds.Env {
+					if env == nil {
+						env = make(map[string]string)
+					}
+					env[k] = v
+				}
+			}
+		}
+
+		// Per-user credentials change connection params → can't share pool connection.
+		// Fall back to per-agent mode when user has custom credentials.
+		hasUserCreds := userID != "" && m.store != nil
+		if hasUserCreds {
+			if uc, _ := m.store.GetUserCredentials(ctx, srv.ID, userID); uc != nil && (uc.APIKey != "" || len(uc.Headers) > 0 || len(uc.Env) > 0) {
+				hasUserCreds = true
+			} else {
+				hasUserCreds = false
+			}
+		}
+
+		if m.pool != nil && !hasUserCreds {
 			// Pool mode: acquire shared connection, create per-agent BridgeTools
-			if err := m.connectViaPool(ctx, srv.Name, srv.Transport, srv.Command,
+			tid := store.TenantIDFromContext(ctx)
+			if err := m.connectViaPool(ctx, tid, srv.Name, srv.Transport, srv.Command,
 				args, env, srv.URL, headers, srv.ToolPrefix, srv.TimeoutSec); err != nil {
 				slog.Warn("mcp.server.connect_failed", "server", srv.Name, "error", err)
 				continue
@@ -359,7 +404,9 @@ func (m *Manager) Stop() {
 				m.registry.Unregister(toolName)
 			}
 			if m.pool != nil {
-				m.pool.Release(name)
+				if pkey, ok := m.poolKeys[name]; ok {
+					m.pool.Release(pkey)
+				}
 			}
 		} else {
 			// Standalone: close connection directly

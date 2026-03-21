@@ -68,8 +68,13 @@ func (r *MethodRouter) Handle(ctx context.Context, client *Client, req *protocol
 		}
 	}
 
-	// Inject locale into context for i18n support
+	// Inject locale + tenant into context
 	ctx = store.WithLocale(ctx, i18n.Normalize(client.locale))
+	if client.IsCrossTenant() {
+		ctx = store.WithCrossTenant(ctx)
+	} else if client.TenantID() != uuid.Nil {
+		ctx = store.WithTenantID(ctx, client.TenantID())
+	}
 
 	slog.Debug("handling method", "method", req.Method, "client", client.id, "req_id", req.ID)
 	handler(ctx, client, req)
