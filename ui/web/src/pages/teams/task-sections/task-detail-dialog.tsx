@@ -8,7 +8,6 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Trash2, Paperclip } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { formatDate, formatFileSize } from "@/lib/format";
-import { useAuthStore } from "@/stores/use-auth-store";
 import { useWsEvent } from "@/hooks/use-ws-event";
 import { Events } from "@/api/protocol";
 import type { TeamTaskData, TeamTaskComment, TeamTaskEvent, TeamTaskAttachment } from "@/types/team";
@@ -37,7 +36,6 @@ export function TaskDetailDialog({
   getTaskDetail, deleteTask, onAddComment, taskLookup, memberLookup, emojiLookup, onNavigateTask,
 }: TaskDetailDialogProps) {
   const { t } = useTranslation("teams");
-  const token = useAuthStore((s) => s.token);
   const [events, setEvents] = useState<TeamTaskEvent[]>([]);
   const [attachments, setAttachments] = useState<TeamTaskAttachment[]>([]);
   const [comments, setComments] = useState<TeamTaskComment[]>([]);
@@ -230,7 +228,7 @@ export function TaskDetailDialog({
                       )}
                     </div>
                     <a
-                      href={`/v1/teams/${teamId}/attachments/${a.id}/download?token=${encodeURIComponent(token)}`}
+                      href={a.download_url || `/v1/teams/${teamId}/attachments/${a.id}/download`}
                       download
                       className="shrink-0 text-xs text-primary hover:underline"
                       onClick={(e) => e.stopPropagation()}

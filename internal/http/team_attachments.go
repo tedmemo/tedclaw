@@ -30,9 +30,21 @@ func (h *TeamAttachmentsHandler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *TeamAttachmentsHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Priority 1: HMAC-signed file token (?ft=) — no gateway token exposure.
+		if ft := r.URL.Query().Get("ft"); ft != "" {
+			path := r.URL.Path // full path for HMAC binding
+			if VerifyFileToken(ft, path, h.token) {
+				next(w, r)
+				return
+			}
+			http.Error(w, "invalid or expired file token", http.StatusUnauthorized)
+			return
+		}
+		// Priority 2: Bearer header (API clients).
 		provided := extractBearerToken(r)
 		if provided == "" {
-			provided = r.URL.Query().Get("token")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
 		authedReq, ok := requireAuthBearer(h.token, "", provided, w, r)
 		if !ok {

@@ -172,6 +172,7 @@ type TeamTaskAttachmentData struct {
 	CreatedBySenderID string          `json:"created_by_sender_id,omitempty"`
 	Metadata          json.RawMessage `json:"metadata,omitempty"`
 	CreatedAt         time.Time       `json:"created_at"`
+	DownloadURL       string          `json:"download_url,omitempty"` // signed URL, populated at delivery time
 }
 
 // TeamUserGrant represents a user's access grant to a team.
