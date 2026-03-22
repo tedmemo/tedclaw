@@ -4,6 +4,7 @@ import { HttpClient } from "@/api/http-client";
 import { WsContext } from "@/hooks/use-ws";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useWsQueryInvalidation } from "@/hooks/use-query-invalidation";
+import { LOCAL_STORAGE_KEYS } from "@/lib/constants";
 import { useWsEvent } from "@/hooks/use-ws-event";
 import { TEAM_RELATED_EVENTS, Methods } from "@/api/protocol";
 import { useTeamEventStore } from "@/stores/use-team-event-store";
@@ -41,14 +42,14 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
               store.setAvailableTenants(tenants);
 
               // Auto-select tenant if applicable
-              const savedScope = localStorage.getItem("goclaw:tenant_id");
+              const savedScope = localStorage.getItem(LOCAL_STORAGE_KEYS.TENANT_ID);
               if (savedScope && tenants.some((t) => t.slug === savedScope)) {
                 // Already scoped via localStorage — auto-select
                 store.setTenantSelected(true);
               } else if (!client.crossTenant && tenants.length === 1) {
                 // Non-admin with single tenant — auto-select
                 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                localStorage.setItem("goclaw:tenant_id", tenants[0]!.slug);
+                localStorage.setItem(LOCAL_STORAGE_KEYS.TENANT_ID, tenants[0]!.slug);
                 store.setTenantSelected(true);
               } else if (!client.crossTenant && tenants.length === 0) {
                 // No tenants — leave tenantSelected=false (blocked)

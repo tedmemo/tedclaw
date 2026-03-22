@@ -66,9 +66,9 @@ export function Sidebar({ collapsed, onNavItemClick }: SidebarProps) {
       {/* Logo / title */}
       <div className="flex h-14 items-center border-b px-4">
         {!collapsed && (
-          <div className="flex items-center gap-2">
-            <img src="/goclaw-icon.svg" alt="GoClaw" className="h-7 w-7" />
-            <span className="text-base font-semibold tracking-tight">
+          <div className="flex items-center gap-2.5">
+            <img src="/goclaw-icon.svg" alt="GoClaw" className="h-8 w-8" />
+            <span className="text-lg font-bold tracking-tight text-sidebar-primary">
               GoClaw
             </span>
           </div>
@@ -128,7 +128,9 @@ export function Sidebar({ collapsed, onNavItemClick }: SidebarProps) {
           <SidebarItem to={ROUTES.CLI_CREDENTIALS} icon={KeyRound} label={t("nav.cliCredentials")} collapsed={collapsed} />
           <SidebarItem to={ROUTES.API_KEYS} icon={KeyRound} label={t("nav.apiKeys")} collapsed={collapsed} />
           <SidebarItem to={ROUTES.PACKAGES} icon={Blocks} label={t("nav.packages")} collapsed={collapsed} />
-          <SidebarItem to={ROUTES.CONFIG} icon={Settings} label={t("nav.config")} collapsed={collapsed} />
+          {isCrossTenant && (
+            <SidebarItem to={ROUTES.CONFIG} icon={Settings} label={t("nav.config")} collapsed={collapsed} />
+          )}
           <SidebarItem to={ROUTES.APPROVALS} icon={ShieldCheck} label={t("nav.approvals")} collapsed={collapsed} />
           <SidebarItem to="/docs" icon={FileText} label={t("nav.apiDocs")} collapsed={collapsed} external />
         </SidebarGroup>

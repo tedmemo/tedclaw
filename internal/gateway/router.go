@@ -127,13 +127,28 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 		client.role = permissions.RoleAdmin
 		client.authenticated = true
 		client.userID = params.UserID
-		client.crossTenant = true
-		// Cross-tenant admin can narrow scope to a specific tenant
-		tenantScope := params.TenantID
-		if tenantScope == "" {
-			tenantScope = params.TenantScope // backward compat
+
+		// Only owner IDs get cross-tenant (god-mode) access;
+		// other users with the gateway token still get admin role
+		// but are scoped to their tenant memberships.
+		isOwner := isOwnerID(params.UserID, r.server.cfg.Gateway.OwnerIDs)
+		client.crossTenant = isOwner
+
+		if isOwner {
+			// Cross-tenant admin can narrow scope to a specific tenant
+			tenantScope := params.TenantID
+			if tenantScope == "" {
+				tenantScope = params.TenantScope // backward compat
+			}
+			r.applyTenantScope(ctx, client, tenantScope)
+		} else {
+			// Non-owner with gateway token: resolve tenant via hint or membership
+			hint := params.TenantID
+			if hint == "" {
+				hint = params.TenantScope
+			}
+			client.tenantID = r.resolveTenantHint(ctx, hint, params.UserID)
 		}
-		r.applyTenantScope(ctx, client, tenantScope)
 		r.sendConnectResponse(ctx, client, req.ID)
 		return
 	}
@@ -281,6 +296,23 @@ func (r *MethodRouter) sendConnectResponse(ctx context.Context, client *Client, 
 	}
 
 	client.SendResponse(protocol.NewOKResponse(reqID, resp))
+}
+
+// isOwnerID checks if the given user ID is in the configured owner list.
+// If no owner IDs configured, only "system" is treated as owner (fail-closed).
+func isOwnerID(userID string, ownerIDs []string) bool {
+	if userID == "" {
+		return false
+	}
+	if len(ownerIDs) == 0 {
+		return userID == "system"
+	}
+	for _, id := range ownerIDs {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveTenantHint resolves a tenant slug hint to a UUID with membership validation.

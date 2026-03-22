@@ -6,7 +6,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { useTenants } from "@/hooks/use-tenants";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { usePendingPairingsCount } from "@/hooks/use-pending-pairings-count";
-import { ROUTES, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, TIMEZONE_OPTIONS, type Language } from "@/lib/constants";
+import { ROUTES, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, TIMEZONE_OPTIONS, LOCAL_STORAGE_KEYS, type Language } from "@/lib/constants";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover } from "radix-ui";
 import { useState } from "react";
@@ -69,7 +69,7 @@ export function Topbar() {
             className="h-auto w-auto gap-1 border-0 bg-transparent px-2 py-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent **:data-radix-select-icon:hidden"
           >
             <Globe className="h-4 w-4 shrink-0" />
-            <SelectValue />
+            <span className="hidden sm:inline"><SelectValue /></span>
           </SelectTrigger>
           <SelectContent>
             {SUPPORTED_LANGUAGES.map((lang) => (
@@ -84,7 +84,7 @@ export function Topbar() {
             className="h-auto w-auto gap-1 border-0 bg-transparent px-2 py-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent **:data-radix-select-icon:hidden"
           >
             <Clock className="h-4 w-4 shrink-0" />
-            <SelectValue />
+            <span className="hidden sm:inline"><SelectValue /></span>
           </SelectTrigger>
           <SelectContent>
             {TIMEZONE_OPTIONS.map((tz) => (
@@ -126,9 +126,9 @@ function UserMenu() {
     // Cross-tenant admin: narrow scope to specific tenant
     // Non-cross-tenant: use tenant_hint for pairing
     if (isCrossTenant) {
-      localStorage.setItem("goclaw:tenant_id", slug);
+      localStorage.setItem(LOCAL_STORAGE_KEYS.TENANT_ID, slug);
     } else {
-      localStorage.setItem("goclaw:tenant_hint", slug);
+      localStorage.setItem(LOCAL_STORAGE_KEYS.TENANT_HINT, slug);
     }
     window.location.reload();
   };
@@ -171,7 +171,7 @@ function UserMenu() {
               {isCrossTenant && (
                 <button
                   onClick={() => {
-                    localStorage.removeItem("goclaw:tenant_id");
+                    localStorage.removeItem(LOCAL_STORAGE_KEYS.TENANT_ID);
                     window.location.reload();
                   }}
                   className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"

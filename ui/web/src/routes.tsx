@@ -158,7 +158,7 @@ export function AppRoutes() {
           <Route path={ROUTES.CRON} element={<CronPage />} />
           <Route path={ROUTES.CRON_DETAIL} element={<CronPage />} />
           {/* Admin-only pages */}
-          <Route path={ROUTES.CONFIG} element={<RequireAdmin><ConfigPage /></RequireAdmin>} />
+          <Route path={ROUTES.CONFIG} element={<RequireCrossTenant><ConfigPage /></RequireCrossTenant>} />
           <Route path={ROUTES.PROVIDERS} element={<RequireAdmin><ProvidersPage key="list" /></RequireAdmin>} />
           <Route path={ROUTES.PROVIDER_DETAIL} element={<RequireAdmin><ProvidersPage key="detail" /></RequireAdmin>} />
           <Route path={ROUTES.CLI_CREDENTIALS} element={<RequireAdmin><CliCredentialsPage /></RequireAdmin>} />

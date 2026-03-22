@@ -40,7 +40,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   tenantSlug: "",
   isCrossTenant: false,
   availableTenants: [],
-  tenantSelected: !!localStorage.getItem("goclaw:tenant_id"),
+  tenantSelected: !!localStorage.getItem(LOCAL_STORAGE_KEYS.TENANT_ID),
 
   setCredentials: (token, userId) => {
     localStorage.setItem(LOCAL_STORAGE_KEYS.TOKEN, token);
@@ -78,6 +78,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem(LOCAL_STORAGE_KEYS.TOKEN);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.USER_ID);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.SENDER_ID);
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.TENANT_ID);
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.TENANT_HINT);
     set({
       token: "", userId: "", senderID: "", connected: false, role: "", serverInfo: null,
       tenantId: "", tenantName: "", tenantSlug: "", isCrossTenant: false, availableTenants: [],

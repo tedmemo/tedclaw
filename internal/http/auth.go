@@ -79,6 +79,7 @@ func extractAgentID(r *http.Request, model string) string {
 var pkgAPIKeyCache *apiKeyCache
 var pkgPairingStore store.PairingStore
 var pkgTenantCache *tenantCache
+var pkgOwnerIDs []string
 
 // InitAPIKeyCache initializes the shared API key cache with TTL and pubsub invalidation.
 // Must be called once during server startup before handling requests.
@@ -97,6 +98,29 @@ func InitAPIKeyCache(s store.APIKeyStore, mb *bus.MessageBus) {
 // Allows browser-paired users to access HTTP APIs via X-GoClaw-Sender-Id header.
 func InitPairingAuth(ps store.PairingStore) {
 	pkgPairingStore = ps
+}
+
+// InitOwnerIDs sets the configured owner user IDs for HTTP auth.
+// Only owners get cross-tenant access with gateway token; others are tenant-scoped.
+func InitOwnerIDs(ids []string) {
+	pkgOwnerIDs = ids
+}
+
+// isHTTPOwnerID checks if the user ID is a configured owner.
+// If no owner IDs configured, only "system" is treated as owner (fail-closed).
+func isHTTPOwnerID(userID string, ownerIDs []string) bool {
+	if userID == "" {
+		return false
+	}
+	if len(ownerIDs) == 0 {
+		return userID == "system"
+	}
+	for _, id := range ownerIDs {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // InitTenantStore sets the tenant cache for HTTP auth with TTL and pubsub invalidation.
@@ -140,17 +164,36 @@ func resolveAuth(r *http.Request, gatewayToken string) authResult {
 // resolveAuthBearer is like resolveAuth but accepts a pre-extracted bearer token.
 // Useful for handlers that also accept tokens from query params.
 func resolveAuthBearer(r *http.Request, gatewayToken, bearer string) authResult {
-	// Gateway token → admin (cross-tenant, or scoped via X-GoClaw-Tenant-Id header)
+	// Gateway token → admin
+	// Only owner IDs get cross-tenant access; others are tenant-scoped.
+	// If no owner IDs configured, all gateway token users get cross-tenant (backward compat).
 	if gatewayToken != "" && tokenMatch(bearer, gatewayToken) {
-		res := authResult{Role: permissions.RoleAdmin, Authenticated: true, CrossTenant: true}
-		if tenantVal := r.Header.Get("X-GoClaw-Tenant-Id"); tenantVal != "" && pkgTenantCache != nil {
-			// Accept both UUID and slug
+		userID := extractUserID(r)
+		isOwner := isHTTPOwnerID(userID, pkgOwnerIDs)
+		res := authResult{Role: permissions.RoleAdmin, Authenticated: true, CrossTenant: isOwner}
+		tenantVal := r.Header.Get("X-GoClaw-Tenant-Id")
+		if isOwner && tenantVal != "" && pkgTenantCache != nil {
+			// Cross-tenant admin can narrow scope via header
 			if tid, err := uuid.Parse(tenantVal); err == nil {
 				if t, err := pkgTenantCache.GetTenant(r.Context(), tid); err == nil && t != nil {
 					res.TenantID = t.ID
 				}
 			} else if t, err := pkgTenantCache.GetTenantBySlug(r.Context(), tenantVal); err == nil && t != nil {
 				res.TenantID = t.ID
+			}
+		} else if !isOwner && pkgTenantCache != nil {
+			// Non-owner with gateway token: resolve tenant from header or fallback to master
+			if tenantVal != "" {
+				if tid, err := uuid.Parse(tenantVal); err == nil {
+					if t, err := pkgTenantCache.GetTenant(r.Context(), tid); err == nil && t != nil {
+						res.TenantID = t.ID
+					}
+				} else if t, err := pkgTenantCache.GetTenantBySlug(r.Context(), tenantVal); err == nil && t != nil {
+					res.TenantID = t.ID
+				}
+			}
+			if res.TenantID == uuid.Nil {
+				res.TenantID = store.MasterTenantID
 			}
 		}
 		return res

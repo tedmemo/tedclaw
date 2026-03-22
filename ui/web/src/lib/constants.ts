@@ -46,6 +46,8 @@ export const LOCAL_STORAGE_KEYS = {
   TOKEN: "goclaw:token",
   USER_ID: "goclaw:userId",
   SENDER_ID: "goclaw:senderID",
+  TENANT_ID: "goclaw:tenant_id",
+  TENANT_HINT: "goclaw:tenant_hint",
   THEME: "goclaw:theme",
   SIDEBAR_COLLAPSED: "goclaw:sidebarCollapsed",
   LANGUAGE: "goclaw:language",
