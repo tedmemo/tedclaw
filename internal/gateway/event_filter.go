@@ -25,15 +25,16 @@ func clientCanReceiveEvent(c *Client, event bus.Event) bool {
 		return true
 	}
 
-	// Tenant isolation: non-cross-tenant clients only receive events matching their tenant.
-	// Fail-closed: events with unset TenantID (uuid.Nil) are also blocked for tenant-scoped clients.
-	if !c.crossTenant && c.tenantID != uuid.Nil {
+	// Tenant isolation: filter events by tenant.
+	// Applies to: (1) non-cross-tenant clients, (2) cross-tenant clients with tenant_scope set.
+	// Fail-closed: events with unset TenantID (uuid.Nil) are blocked for tenant-scoped clients.
+	if c.tenantID != uuid.Nil {
 		if event.TenantID == uuid.Nil || event.TenantID != c.tenantID {
 			return false
 		}
 	}
 
-	// Admin sees everything.
+	// Admin sees everything (when not tenant-scoped, handled above).
 	if permissions.HasMinRole(c.role, permissions.RoleAdmin) {
 		return true
 	}
