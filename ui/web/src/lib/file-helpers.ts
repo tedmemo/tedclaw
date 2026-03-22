@@ -164,7 +164,9 @@ export function toFileUrl(path: string, token?: string): string {
     const basename = path.split("/").pop() ?? path;
     url = `/v1/files/${basename}`;
   }
-  if (token) {
+  // If URL already has a signed file token (?ft=), don't append the gateway token.
+  // Signed tokens are short-lived and path-bound — no need to expose the main token.
+  if (token && !url.includes("ft=")) {
     const sep = url.includes("?") ? "&" : "?";
     url += `${sep}token=${encodeURIComponent(token)}`;
   }
