@@ -46,10 +46,12 @@ func processNormalMessage(
 		ctx = store.WithTenantID(ctx, store.MasterTenantID)
 	}
 
-	// Determine target agent via bindings or explicit AgentID
-	agentID := msg.AgentID
+	// Determine target agent: bindings take priority over channel instance default.
+	// This allows one channel instance (e.g. single Slack bot) to route to
+	// different agents based on chat_id/peer_kind bindings.
+	agentID := resolveAgentRoute(cfg, msg.Channel, msg.ChatID, msg.PeerKind)
 	if agentID == "" {
-		agentID = resolveAgentRoute(cfg, msg.Channel, msg.ChatID, msg.PeerKind)
+		agentID = msg.AgentID
 	}
 
 	agentLoop, err := agents.Get(ctx, agentID)

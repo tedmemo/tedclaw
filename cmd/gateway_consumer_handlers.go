@@ -562,9 +562,9 @@ func handleResetCommand(
 		return false
 	}
 
-	agentID := msg.AgentID
+	agentID := resolveAgentRoute(cfg, msg.Channel, msg.ChatID, msg.PeerKind)
 	if agentID == "" {
-		agentID = resolveAgentRoute(cfg, msg.Channel, msg.ChatID, msg.PeerKind)
+		agentID = msg.AgentID
 	}
 	peerKind := msg.PeerKind
 	if peerKind == "" {
@@ -601,9 +601,9 @@ func handleStopCommand(
 		return false
 	}
 
-	agentID := msg.AgentID
+	agentID := resolveAgentRoute(cfg, msg.Channel, msg.ChatID, msg.PeerKind)
 	if agentID == "" {
-		agentID = resolveAgentRoute(cfg, msg.Channel, msg.ChatID, msg.PeerKind)
+		agentID = msg.AgentID
 	}
 	peerKind := msg.PeerKind
 	if peerKind == "" {
