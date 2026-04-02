@@ -1,0 +1,24 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # Daily at 2 PM UTC (midnight AEST)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create backup artifact placeholder
+        run: |
+          echo "Backup reminder: run backup.sh on the server"
+          echo "Last automated check: $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backup-status.txt
+
+      - name: Upload backup status
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-status-${{ github.run_number }}
+          path: backup-status.txt
+          retention-days: 90
