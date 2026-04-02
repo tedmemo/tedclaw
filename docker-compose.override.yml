@@ -1,0 +1,10 @@
+# Local overrides for TedClaw
+# Mounts host config and custom skills into the container
+services:
+  goclaw:
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./custom-skills:/app/custom-skills:ro
+    environment:
+      - GOCLAW_CONFIG=/app/config.json
+      - GOCLAW_SKILLS_DIR=/app/custom-skills
