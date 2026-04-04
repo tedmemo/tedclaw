@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 
 DATA_DIR = os.environ.get("GOCLAW_WORKSPACE", "/app/workspace")
@@ -15,12 +16,12 @@ FILES = {
 }
 
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "_shared"))
+from safe_json import load_json as _safe_load
+
+
 def load(key):
-    path = FILES.get(key, "")
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            return json.load(f)
-    return {}
+    return _safe_load(FILES.get(key, ""))
 
 
 def week_range():
