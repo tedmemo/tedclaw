@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import random
+import sys
 from datetime import datetime, timedelta, date
 
 DATA_DIR = os.environ.get("GOCLAW_WORKSPACE", "/app/workspace")
@@ -32,12 +33,12 @@ FEASTS = {
 }
 
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "_shared"))
+from safe_json import load_json as _safe_load
+
+
 def load_json(filename):
-    path = os.path.join(DATA_DIR, filename)
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            return json.load(f)
-    return {}
+    return _safe_load(os.path.join(DATA_DIR, filename))
 
 
 def generate_briefing(user_id):
