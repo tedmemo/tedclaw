@@ -23,17 +23,16 @@ def normalize_location(loc):
     return ALIASES.get(loc, loc)
 
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "_shared"))
+from safe_json import load_json, save_json
+
+
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+    return load_json(DATA_FILE)
 
 
 def save_data(data):
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    save_json(DATA_FILE, data)
 
 
 def add_items(user_id, location, items_str):

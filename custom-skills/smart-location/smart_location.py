@@ -14,17 +14,16 @@ DEFAULT_RADIUS_M = 200
 COOLDOWN_MINUTES = 30
 
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "_shared"))
+from safe_json import load_json, save_json
+
+
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+    return load_json(DATA_FILE)
 
 
 def save_data(data):
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    save_json(DATA_FILE, data)
 
 
 def haversine_m(lat1, lon1, lat2, lon2):
@@ -253,7 +252,7 @@ def main():
     args = parser.parse_args()
 
     if args.action == "save-location":
-        if not args.name or not args.lat:
+        if not args.name or args.lat is None:
             print("Error: --name, --lat, --lon required")
             sys.exit(1)
         save_location(args.user, args.name, args.lat, args.lon, args.radius)
@@ -263,12 +262,12 @@ def main():
             sys.exit(1)
         add_reminder(args.user, args.location, args.action_text, args.deliver_to)
     elif args.action == "update-gps":
-        if not args.lat:
+        if args.lat == 0 and args.lon == 0:
             print("Error: --lat and --lon required")
             sys.exit(1)
         update_gps(args.user, args.lat, args.lon)
     elif args.action == "check":
-        if not args.lat:
+        if args.lat == 0 and args.lon == 0:
             print("Error: --lat and --lon required")
             sys.exit(1)
         check_location(args.user, args.lat, args.lon)
