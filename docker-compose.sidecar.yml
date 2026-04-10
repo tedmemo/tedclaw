@@ -1,0 +1,36 @@
+# Sidecar overlay — Python service for location tracking + scheduling.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml \
+#     -f docker-compose.override.yml -f docker-compose.sidecar.yml up -d
+
+services:
+  sidecar:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - SIDECAR_TELEGRAM_TOKEN=${SIDECAR_TELEGRAM_TOKEN:-}
+      - GOCLAW_TELEGRAM_TOKEN=${GOCLAW_TELEGRAM_TOKEN:-}
+      - TEDANGEL_TELEGRAM_TOKEN=${TEDANGEL_TELEGRAM_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-1282906958}
+      - POSTGRES_DSN=postgres://${POSTGRES_USER:-goclaw}:${POSTGRES_PASSWORD:-goclaw}@postgres:5432/${POSTGRES_DB:-goclaw}
+      - GOCLAW_WS_URL=ws://goclaw:18790/ws
+      - GOCLAW_GATEWAY_TOKEN=${GOCLAW_GATEWAY_TOKEN:-}
+      - TZ=Australia/Melbourne
+      - API_PORT=8080
+      - DATA_DIR=/app/workspace
+    volumes:
+      - goclaw-workspace:/app/workspace
+    ports:
+      - "${SIDECAR_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - default
+      - goclaw-net
