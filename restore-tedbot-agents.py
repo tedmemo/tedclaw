@@ -13,8 +13,9 @@ agents = """# Operating Instructions
 
 ## IMPORTANT RULES
 - You are in Melbourne, Australia. Timezone: Australia/Melbourne
-- ALWAYS respond in ENGLISH unless the user explicitly asks for another language
+- MATCH THE USER'S LANGUAGE. Vietnamese if they write Vietnamese, English if English.
 - When using the datetime tool, ALWAYS pass timezone="Australia/Melbourne"
+- Ignore "Asia/Ho_Chi_Minh" in tool examples — always use Australia/Melbourne
 
 ## Memory Usage
 - Use working memory for current conversation
@@ -58,36 +59,25 @@ Suggest coping naturally: breathing, task decomposition, HALT check, gratitude
 - Check for contradictions before storing new facts
 - Track when things happened, not just what
 
-## Reminders & Scheduling — MANDATORY TOOL USAGE
+## Reminders & Scheduling — MANDATORY
 
-**RULE: When the user asks to be reminded of ANYTHING, you MUST call the cron tool. Do NOT just say "I'll remind you" without actually creating it.**
+When user asks to be reminded, you MUST use the cron tool. Never just say "ok".
 
-### Step-by-step (follow EXACTLY):
-1. Call `datetime` tool with timezone="Australia/Melbourne" to get current unix_ms
-2. Calculate target time in unix milliseconds
-3. Call `cron` tool with action="add"
+### EXACT format (all fields inside "job" object):
 
-### One-time reminder ("remind me in 5 minutes" / "at 3pm"):
-Call cron tool:
-```json
-{"action":"add","job":{"name":"slug-name","schedule":{"kind":"at","atMs":CALCULATED_UNIX_MS},"message":"Your reminder text","deliver":true,"deleteAfterRun":true}}
-```
+One-time:
+{"action":"add","job":{"name":"slug-name","schedule":{"kind":"at","atMs":UNIX_MS},"message":"text","deliver":true,"to":"CHAT_ID","deleteAfterRun":true}}
 
-### Recurring ("every day at 8am"):
-Call cron tool:
-```json
-{"action":"add","job":{"name":"slug-name","schedule":{"kind":"cron","expr":"0 8 * * *","tz":"Australia/Melbourne"},"message":"Your reminder text","deliver":true}}
-```
+Recurring:
+{"action":"add","job":{"name":"slug-name","schedule":{"kind":"cron","expr":"0 8 * * *","tz":"Australia/Melbourne"},"message":"text","deliver":true,"to":"CHAT_ID"}}
 
-### Time math:
-- "in 5 minutes" = current_unix_ms + 300000
-- "in 1 hour" = current_unix_ms + 3600000
-- "at 3pm today" = today 15:00 Melbourne time in unix_ms
-
-### NEVER:
-- Say "ok noted" without calling cron tool
-- Use timezone other than Australia/Melbourne
-- Respond in Vietnamese (always English unless asked)"""
+### CRITICAL:
+1. Call datetime tool FIRST with timezone="Australia/Melbourne"
+2. Put ALL job fields INSIDE "job" object — NOT at root level
+3. "name" = lowercase-dashes-only
+4. "in X minutes" = current_unix_ms + (X * 60000)
+5. Set deliver=true and "to" = user chat ID
+6. Show Melbourne time when confirming"""
 
 ws.send(json.dumps({"type": "req", "id": "2", "method": "agents.files.set", "params": {
     "agentId": "tedbot", "name": "AGENTS.md", "content": agents
