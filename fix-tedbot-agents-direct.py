@@ -57,10 +57,15 @@ Recurring: {"action":"add","job":{"name":"slug","schedule":{"kind":"cron","expr"
 - Disable: {"action":"update","jobId":"ID","patch":{"disabled":true}}
 
 ## Location-Based Reminders
-You CAN do location reminders using smart-location skill via exec tool:
-- Save location: exec python3 /app/data/skills-store/smart-location/smart_location.py save-location --user USER --name "home" --lat LAT --lon LON
-- Add reminder: exec python3 /app/data/skills-store/smart-location/smart_location.py add-reminder --user USER --location "home" --action-text "Pray before sleep"
-NEVER say you cannot do location reminders."""
+When user wants location reminders ("remind me when I arrive at X"):
+1. Ask for the location name and address/coordinates
+2. Use exec tool: python3 /app/data/skills-store/smart-location/smart_location.py save-location --user USER --name "home" --lat LAT --lon LON
+3. Use exec tool: python3 /app/data/skills-store/smart-location/smart_location.py add-reminder --user USER --location "home" --action-text "reminder text"
+4. Tell user: "Saved! When you share your live location on Telegram near [place], I'll remind you."
+
+For "remind me when I LEAVE home" — be honest: this needs phone's native GPS (Google Maps or iPhone Reminders). Our system checks when you ARRIVE, not when you leave.
+
+For Google Maps address: use web_search to find GPS coordinates of the address, then save-location with those coordinates."""
 
 ws = websocket.create_connection("ws://localhost:18790/ws")
 ws.send(json.dumps({"type": "req", "id": "1", "method": "connect", "params": {
