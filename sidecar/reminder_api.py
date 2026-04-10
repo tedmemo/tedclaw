@@ -166,3 +166,36 @@ async def list_locations():
         "locations": user.get("locations", []),
         "reminders": [r for r in user.get("reminders", []) if not r.get("completed")],
     }
+
+
+class GPSCheckRequest(BaseModel):
+    lat: float
+    lon: float
+    user_id: Optional[str] = None
+    chat_id: Optional[int] = None
+
+
+@app.post("/api/check-gps")
+async def check_gps(req: GPSCheckRequest):
+    """Check current GPS against saved geofences.
+
+    The AI agent calls this when user shares location.
+    Returns any triggered notifications (enter/leave geofences).
+    """
+    import geofence_engine
+    user_id = req.user_id or str(config.TELEGRAM_CHAT_ID)
+    chat_id = req.chat_id or config.TELEGRAM_CHAT_ID
+
+    notifications = geofence_engine.check_geofences(user_id, req.lat, req.lon)
+
+    # Also send Telegram notifications directly
+    if notifications:
+        await notifier.notify_geofence(chat_id, notifications)
+
+    return {
+        "ok": True,
+        "lat": req.lat,
+        "lon": req.lon,
+        "notifications": notifications,
+        "count": len(notifications),
+    }
