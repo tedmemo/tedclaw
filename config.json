@@ -3,5 +3,11 @@
     "telegram": {
       "enabled": true
     }
+  },
+  "cron": {
+    "default_timezone": "Australia/Melbourne"
+  },
+  "datetime": {
+    "timezone": "Australia/Melbourne"
   }
 }
