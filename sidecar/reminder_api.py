@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -166,6 +167,151 @@ async def list_locations():
         "locations": user.get("locations", []),
         "reminders": [r for r in user.get("reminders", []) if not r.get("completed")],
     }
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """Management dashboard — view and manage reminders, locations, cron jobs."""
+    import geofence_engine
+    user_id = str(config.TELEGRAM_CHAT_ID)
+
+    reminders = sched.list_reminders()
+    user = geofence_engine.load_locations(user_id)
+    locations = user.get("locations", [])
+    loc_reminders = [r for r in user.get("reminders", []) if not r.get("completed")]
+
+    # Build reminders HTML
+    rem_rows = ""
+    for r in reminders:
+        rtype = "One-time" if r.get("one_time") else "Recurring"
+        when = r.get("run_at", r.get("cron", ""))
+        rem_rows += f"<tr><td>{r['id']}</td><td>{r['message']}</td><td>{rtype}</td><td>{when}</td>"
+        rem_rows += f'<td><button onclick="del_reminder(\'{r["id"]}\')">Delete</button></td></tr>'
+
+    if not rem_rows:
+        rem_rows = '<tr><td colspan="5">No active reminders</td></tr>'
+
+    # Build locations HTML
+    loc_rows = ""
+    for l in locations:
+        loc_rows += f"<tr><td>{l['name']}</td><td>{l['lat']:.4f}</td><td>{l['lon']:.4f}</td><td>{l.get('radius', 200)}m</td></tr>"
+
+    if not loc_rows:
+        loc_rows = '<tr><td colspan="4">No saved locations</td></tr>'
+
+    # Build location reminders HTML
+    locrem_rows = ""
+    for r in loc_reminders:
+        locrem_rows += f"<tr><td>{r.get('id','')}</td><td>{r['location']}</td><td>{r['action']}</td><td>{r.get('triggered_count',0)}</td></tr>"
+
+    if not locrem_rows:
+        locrem_rows = '<tr><td colspan="4">No location reminders</td></tr>'
+
+    return f"""<!DOCTYPE html>
+<html><head>
+<title>TedClaw Sidecar</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #e0e0e0; }}
+  h1 {{ color: #00d4ff; }} h2 {{ color: #7c83ff; border-bottom: 1px solid #333; padding-bottom: 8px; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 10px 0 30px; }}
+  th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #333; }}
+  th {{ background: #16213e; color: #00d4ff; }}
+  tr:hover {{ background: #16213e; }}
+  button {{ background: #e74c3c; color: white; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; }}
+  button:hover {{ background: #c0392b; }}
+  .btn-add {{ background: #27ae60; }} .btn-add:hover {{ background: #219a52; }}
+  input, select {{ padding: 6px 10px; border: 1px solid #444; border-radius: 4px; background: #16213e; color: #e0e0e0; margin: 4px; }}
+  .form-row {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }}
+  .status {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; }}
+  .ok {{ background: #27ae60; }} .warn {{ background: #f39c12; }}
+  #msg {{ padding: 10px; margin: 10px 0; border-radius: 4px; display: none; }}
+</style>
+</head><body>
+<h1>TedClaw Sidecar Dashboard</h1>
+<p><span class="status ok">ONLINE</span> Melbourne time: {datetime.now(ZoneInfo('Australia/Melbourne')).strftime('%I:%M %p %a %d %b')}</p>
+
+<div id="msg"></div>
+
+<h2>Time Reminders ({len(reminders)})</h2>
+<table><tr><th>ID</th><th>Message</th><th>Type</th><th>When</th><th>Action</th></tr>{rem_rows}</table>
+
+<div class="form-row">
+  <input id="rem-msg" placeholder="Reminder message" size="30">
+  <input id="rem-min" type="number" placeholder="Minutes" size="8">
+  <button class="btn-add" onclick="add_reminder()">Add Reminder</button>
+</div>
+
+<h2>Saved Locations ({len(locations)})</h2>
+<table><tr><th>Name</th><th>Lat</th><th>Lon</th><th>Radius</th></tr>{loc_rows}</table>
+
+<div class="form-row">
+  <input id="loc-name" placeholder="Location name" size="20">
+  <input id="loc-lat" type="number" step="0.0001" placeholder="Latitude">
+  <input id="loc-lon" type="number" step="0.0001" placeholder="Longitude">
+  <button class="btn-add" onclick="add_location()">Save Location</button>
+</div>
+
+<h2>Location Reminders ({len(loc_reminders)})</h2>
+<table><tr><th>ID</th><th>Location</th><th>Action</th><th>Triggered</th></tr>{locrem_rows}</table>
+
+<div class="form-row">
+  <input id="locrem-loc" placeholder="Location name" size="20">
+  <input id="locrem-action" placeholder="What to remind" size="30">
+  <button class="btn-add" onclick="add_loc_reminder()">Add Location Reminder</button>
+</div>
+
+<h2>GoClaw Cron Jobs</h2>
+<p><a href="http://localhost:18790" target="_blank" style="color:#00d4ff">Open GoClaw Dashboard</a> for system check-in management</p>
+
+<script>
+function show(msg, ok) {{
+  const el = document.getElementById('msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = ok ? '#27ae60' : '#e74c3c';
+  setTimeout(() => el.style.display = 'none', 3000);
+}}
+
+async function del_reminder(id) {{
+  const r = await fetch('/api/reminder/' + id, {{method:'DELETE'}});
+  const j = await r.json();
+  show(j.ok ? 'Deleted!' : 'Error', j.ok);
+  if (j.ok) location.reload();
+}}
+
+async function add_reminder() {{
+  const msg = document.getElementById('rem-msg').value;
+  const min = parseInt(document.getElementById('rem-min').value);
+  if (!msg || !min) {{ show('Fill message + minutes', false); return; }}
+  const r = await fetch('/api/reminder', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{message:msg,in_minutes:min}})}});
+  const j = await r.json();
+  show(j.ok ? 'Reminder set for ' + j.fires_at : 'Error', j.ok);
+  if (j.ok) location.reload();
+}}
+
+async function add_location() {{
+  const name = document.getElementById('loc-name').value;
+  const lat = parseFloat(document.getElementById('loc-lat').value);
+  const lon = parseFloat(document.getElementById('loc-lon').value);
+  if (!name || isNaN(lat) || isNaN(lon)) {{ show('Fill all fields', false); return; }}
+  const r = await fetch('/api/location', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{name,lat,lon}})}});
+  const j = await r.json();
+  show(j.ok ? 'Location saved!' : 'Error', j.ok);
+  if (j.ok) location.reload();
+}}
+
+async function add_loc_reminder() {{
+  const loc = document.getElementById('locrem-loc').value;
+  const action = document.getElementById('locrem-action').value;
+  if (!loc || !action) {{ show('Fill all fields', false); return; }}
+  const r = await fetch('/api/location-reminder', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{location:loc,action}})}});
+  const j = await r.json();
+  show(j.ok ? 'Location reminder added!' : 'Error', j.ok);
+  if (j.ok) location.reload();
+}}
+</script>
+</body></html>"""
 
 
 class GPSCheckRequest(BaseModel):
