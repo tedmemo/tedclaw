@@ -209,6 +209,35 @@ async def add_location_reminder(req: LocationReminderRequest):
     return {"ok": True, "id": reminder_id, "location": req.location, "action": req.action}
 
 
+@app.get("/api/openrouter-usage")
+async def openrouter_usage():
+    """Get OpenRouter API usage and costs."""
+    import httpx
+    key = config.GOCLAW_GATEWAY_TOKEN  # We'll use the OpenRouter key from env
+    or_key = ""
+    try:
+        import os
+        or_key = os.environ.get("GOCLAW_OPENROUTER_API_KEY", "")
+    except Exception:
+        pass
+    if not or_key:
+        return {"ok": False, "error": "No OpenRouter key"}
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get("https://openrouter.ai/api/v1/auth/key",
+                                 headers={"Authorization": f"Bearer {or_key}"})
+            d = r.json().get("data", {})
+            return {
+                "ok": True,
+                "total": round(d.get("usage", 0), 4),
+                "today": round(d.get("usage_daily", 0), 4),
+                "week": round(d.get("usage_weekly", 0), 4),
+                "month": round(d.get("usage_monthly", 0), 4),
+            }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/locations")
 async def list_locations():
     """List saved locations and active reminders."""
@@ -283,6 +312,9 @@ async def dashboard():
 </head><body>
 <h1>TedClaw Sidecar Dashboard</h1>
 <p><span class="status ok">ONLINE</span> Melbourne time: {datetime.now(ZoneInfo('Australia/Melbourne')).strftime('%I:%M %p %a %d %b')}</p>
+<div id="cost-display" style="display:flex;gap:20px;background:#16213e;padding:10px;border-radius:6px;margin:10px 0">
+  <span>Loading costs...</span>
+</div>
 
 <div id="msg"></div>
 
@@ -472,7 +504,24 @@ async function saveFile(agentKey, fileName, textareaId) {{
   show(j.ok ? `Saved ${{fileName}} (${{j.chars}} chars)` : 'Error saving', j.ok);
 }}
 
+// Cost display
+async function loadCosts() {{
+  try {{
+    const r = await fetch('/api/openrouter-usage');
+    const j = await r.json();
+    if (j.ok) {{
+      document.getElementById('cost-display').innerHTML = `
+        <span>Total: <strong style="color:#00d4ff">\${{j.total}}</strong></span>
+        <span>Today: <strong>\${{j.today}}</strong></span>
+        <span>Week: <strong>\${{j.week}}</strong></span>
+        <span>Month: <strong>\${{j.month}}</strong></span>
+      `;
+    }}
+  }} catch(e) {{}}
+}}
+
 // Load on page open
+loadCosts();
 loadGoclawCrons();
 loadAgents();
 </script>
