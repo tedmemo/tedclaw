@@ -13,6 +13,8 @@ from typing import Optional
 
 import config
 import scheduler as sched
+import goclaw_cron
+import notifier
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,29 @@ _scheduler = None
 def set_scheduler(s):
     global _scheduler
     _scheduler = s
+
+
+## GoClaw Cron Management Endpoints
+
+@app.get("/api/goclaw-crons")
+async def list_goclaw_crons():
+    """List all GoClaw cron jobs (system check-ins + bot-created)."""
+    jobs = goclaw_cron.list_goclaw_crons()
+    return {"ok": True, "count": len(jobs), "jobs": jobs}
+
+
+@app.delete("/api/goclaw-cron/{job_id}")
+async def delete_goclaw_cron(job_id: str):
+    """Delete a GoClaw cron job by UUID."""
+    ok = goclaw_cron.delete_goclaw_cron(job_id)
+    return {"ok": ok, "deleted": job_id if ok else None}
+
+
+@app.post("/api/goclaw-cron/{job_id}/toggle")
+async def toggle_goclaw_cron(job_id: str, enabled: bool = True):
+    """Enable or disable a GoClaw cron job."""
+    ok = goclaw_cron.toggle_goclaw_cron(job_id, enabled)
+    return {"ok": ok, "job_id": job_id, "enabled": enabled}
 
 
 class ReminderRequest(BaseModel):
@@ -261,8 +286,8 @@ async def dashboard():
   <button class="btn-add" onclick="add_loc_reminder()">Add Location Reminder</button>
 </div>
 
-<h2>GoClaw Cron Jobs</h2>
-<p><a href="http://localhost:18790" target="_blank" style="color:#00d4ff">Open GoClaw Dashboard</a> for system check-in management</p>
+<h2>GoClaw Cron Jobs (System Check-ins)</h2>
+<div id="goclaw-crons">Loading...</div>
 
 <script>
 function show(msg, ok) {{
@@ -310,6 +335,54 @@ async function add_loc_reminder() {{
   show(j.ok ? 'Location reminder added!' : 'Error', j.ok);
   if (j.ok) location.reload();
 }}
+
+// GoClaw Cron Management
+async function loadGoclawCrons() {{
+  const el = document.getElementById('goclaw-crons');
+  try {{
+    const r = await fetch('/api/goclaw-crons');
+    const j = await r.json();
+    if (!j.ok || !j.jobs.length) {{ el.innerHTML = '<p>No GoClaw cron jobs found.</p>'; return; }}
+
+    let html = '<table><tr><th>Name</th><th>Schedule</th><th>Channel</th><th>Status</th><th>Message</th><th>Actions</th></tr>';
+    for (const c of j.jobs) {{
+      const sched = c.cron_expression || (c.interval_ms ? `every ${{c.interval_ms/60000}}m` : c.schedule_kind);
+      const status = c.enabled ? '<span class="status ok">ON</span>' : '<span class="status warn">OFF</span>';
+      const lastRun = c.last_run_at ? c.last_run_at.substring(0,16) : 'never';
+      html += `<tr>
+        <td>${{c.name}}</td>
+        <td>${{sched}}</td>
+        <td>${{c.deliver_channel}}</td>
+        <td>${{status}}</td>
+        <td>${{c.message.substring(0,50)}}${{c.message.length>50?'...':''}}</td>
+        <td>
+          <button onclick="toggleCron('${{c.id}}', ${{!c.enabled}})">${{c.enabled ? 'Disable' : 'Enable'}}</button>
+          <button onclick="if(confirm('Delete ${{c.name}}?'))delCron('${{c.id}}')">Delete</button>
+        </td>
+      </tr>`;
+    }}
+    html += '</table>';
+    html += `<p style="color:#888">${{j.count}} jobs total</p>`;
+    el.innerHTML = html;
+  }} catch(e) {{ el.innerHTML = '<p style="color:#e74c3c">Failed to load crons: ' + e.message + '</p>'; }}
+}}
+
+async function delCron(id) {{
+  const r = await fetch('/api/goclaw-cron/' + id, {{method:'DELETE'}});
+  const j = await r.json();
+  show(j.ok ? 'Cron deleted!' : 'Error', j.ok);
+  loadGoclawCrons();
+}}
+
+async function toggleCron(id, enabled) {{
+  const r = await fetch('/api/goclaw-cron/' + id + '/toggle?enabled=' + enabled, {{method:'POST'}});
+  const j = await r.json();
+  show(j.ok ? (enabled ? 'Enabled!' : 'Disabled!') : 'Error', j.ok);
+  loadGoclawCrons();
+}}
+
+// Load on page open
+loadGoclawCrons();
 </script>
 </body></html>"""
 
