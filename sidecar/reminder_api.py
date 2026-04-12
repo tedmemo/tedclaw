@@ -14,6 +14,7 @@ from typing import Optional
 import config
 import scheduler as sched
 import goclaw_cron
+import goclaw_agents
 import notifier
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,33 @@ async def toggle_goclaw_cron(job_id: str, enabled: bool = True):
     """Enable or disable a GoClaw cron job."""
     ok = goclaw_cron.toggle_goclaw_cron(job_id, enabled)
     return {"ok": ok, "job_id": job_id, "enabled": enabled}
+
+
+## Agent Prompt Management Endpoints
+
+@app.get("/api/agents")
+async def list_agents():
+    """List all agents."""
+    agents = goclaw_agents.list_agents()
+    return {"ok": True, "agents": agents}
+
+
+@app.get("/api/agents/{agent_key}/files")
+async def get_agent_files(agent_key: str):
+    """Get all context files for an agent."""
+    files = goclaw_agents.get_agent_files(agent_key)
+    return {"ok": True, "agent": agent_key, "files": files}
+
+
+class FileUpdateRequest(BaseModel):
+    content: str
+
+
+@app.put("/api/agents/{agent_key}/files/{file_name}")
+async def update_agent_file(agent_key: str, file_name: str, req: FileUpdateRequest):
+    """Update an agent context file (prompt/knowledge)."""
+    ok = goclaw_agents.update_agent_file(agent_key, file_name, req.content)
+    return {"ok": ok, "agent": agent_key, "file": file_name, "chars": len(req.content)}
 
 
 class ReminderRequest(BaseModel):
@@ -289,6 +317,15 @@ async def dashboard():
 <h2>GoClaw Cron Jobs (System Check-ins)</h2>
 <div id="goclaw-crons">Loading...</div>
 
+<h2>Agent Prompts & Knowledge</h2>
+<div class="form-row">
+  <select id="agent-select" onchange="loadAgentFiles()">
+    <option value="">Select agent...</option>
+  </select>
+  <span id="agent-info" style="color:#888"></span>
+</div>
+<div id="agent-files"></div>
+
 <script>
 function show(msg, ok) {{
   const el = document.getElementById('msg');
@@ -381,8 +418,63 @@ async function toggleCron(id, enabled) {{
   loadGoclawCrons();
 }}
 
+// Agent Prompts Management
+let agentsData = [];
+
+async function loadAgents() {{
+  const r = await fetch('/api/agents');
+  const j = await r.json();
+  agentsData = j.agents || [];
+  const sel = document.getElementById('agent-select');
+  for (const a of agentsData) {{
+    const opt = document.createElement('option');
+    opt.value = a.key;
+    opt.textContent = `${{a.key}} (${{a.model}})`;
+    sel.appendChild(opt);
+  }}
+}}
+
+async function loadAgentFiles() {{
+  const key = document.getElementById('agent-select').value;
+  const el = document.getElementById('agent-files');
+  const info = document.getElementById('agent-info');
+  if (!key) {{ el.innerHTML = ''; info.textContent = ''; return; }}
+
+  const agent = agentsData.find(a => a.key === key);
+  info.textContent = agent ? `${{agent.provider}} / ${{agent.model}} / ${{agent.type}}` : '';
+
+  const r = await fetch(`/api/agents/${{key}}/files`);
+  const j = await r.json();
+  if (!j.ok || !j.files.length) {{ el.innerHTML = '<p>No context files.</p>'; return; }}
+
+  let html = '';
+  for (const f of j.files) {{
+    const id = `file-${{key}}-${{f.name.replace(/[^a-z0-9]/gi,'_')}}`;
+    html += `<div style="margin:15px 0">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong style="color:#7c83ff">${{f.name}}</strong>
+        <span style="color:#888">${{f.chars}} chars</span>
+      </div>
+      <textarea id="${{id}}" style="width:100%;height:200px;margin-top:5px;background:#0d1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-family:monospace;font-size:12px;resize:vertical">${{f.content.replace(/</g,'&lt;')}}</textarea>
+      <button class="btn-add" onclick="saveFile('${{key}}','${{f.name}}','${{id}}')" style="margin-top:5px">Save ${{f.name}}</button>
+    </div>`;
+  }}
+  el.innerHTML = html;
+}}
+
+async function saveFile(agentKey, fileName, textareaId) {{
+  const content = document.getElementById(textareaId).value;
+  const r = await fetch(`/api/agents/${{agentKey}}/files/${{fileName}}`, {{
+    method:'PUT', headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{content}})
+  }});
+  const j = await r.json();
+  show(j.ok ? `Saved ${{fileName}} (${{j.chars}} chars)` : 'Error saving', j.ok);
+}}
+
 // Load on page open
 loadGoclawCrons();
+loadAgents();
 </script>
 </body></html>"""
 
