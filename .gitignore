@@ -88,4 +88,5 @@ compose.d/*
 /mise.*.toml
 /mise
 /.mise
+goclaw-patched-linux-amd64
 backups/*.sql.gz

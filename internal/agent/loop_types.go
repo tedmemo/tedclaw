@@ -18,6 +18,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/sandbox"
 	"github.com/nextlevelbuilder/goclaw/internal/skills"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
+	"github.com/nextlevelbuilder/goclaw/internal/tokencount"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/tracing"
 )
@@ -68,10 +69,17 @@ type CacheInvalidateFunc func(agentID uuid.UUID, userID string)
 // Loop is the agent execution loop for one agent instance.
 // Think → Act → Observe cycle with tool execution.
 type Loop struct {
-	id               string
-	displayName      string
-	agentUUID        uuid.UUID // set for context propagation
-	tenantID         uuid.UUID // agent's owning tenant
+	// id is the human-readable agent_key (e.g. "goctech-leader"). Use for logs,
+	// UI events, system prompt rendering, filesystem paths, and context keys.
+	// NEVER set on DB FK columns or DomainEvent.AgentID — those require UUID.
+	// See docs/agent-identity-conventions.md.
+	id          string
+	displayName string
+	// agentUUID is the canonical DB primary key. Use for SQL WHERE/JOIN,
+	// DomainEvent.AgentID, OTel span attributes, and context propagation via
+	// store.WithAgentID. See docs/agent-identity-conventions.md.
+	agentUUID uuid.UUID
+	tenantID  uuid.UUID // agent's owning tenant
 	agentType        string    // "open" or "predefined"
 	defaultTimezone  string    // system default timezone for bootstrap pre-fill
 	provider         providers.Provider
@@ -134,6 +142,10 @@ type Loop struct {
 	// Context pruning config (trim old tool results in-memory)
 	contextPruningCfg *config.ContextPruningConfig
 
+	// tokenCounter provides accurate per-model token counting for context pruning.
+	// Nil means the legacy char-based heuristic is used.
+	tokenCounter tokencount.TokenCounter
+
 	// Sandbox info
 	sandboxEnabled         bool
 	sandboxContainerDir    string
@@ -153,8 +165,18 @@ type Loop struct {
 	injectionAction string // "log", "warn" (default), "block", "off"
 	maxMessageChars int    // 0 = use default (32000)
 
-	// Global builtin tool settings (from builtin_tools table)
+	// Global builtin tool settings (from builtin_tools.settings table).
+	// Tier 3 in the overlay — tenant (tier 2) and future per-agent (tier 1) sit above.
 	builtinToolSettings tools.BuiltinToolSettings
+
+	// Tenant-layer tool settings overlay (from builtin_tool_tenant_configs.settings).
+	// Tier 2 — sits above global (tier 3) and is merged at read time in
+	// BuiltinToolSettingsFromCtx with global winning at tool-name level.
+	tenantToolSettings tools.BuiltinToolSettings
+
+	// Tenant-specific allowed paths beyond workspace (from system_configs['allowed_paths']).
+	// Filesystem tools (read_file, write_file, edit, list_files) check these at execution time.
+	tenantAllowedPaths []string
 
 	// Per-tenant disabled tools (tool name → true means excluded from LLM)
 	disabledTools map[string]bool
@@ -320,8 +342,14 @@ type LoopConfig struct {
 	InjectionAction string      // "log", "warn" (default), "block", "off"
 	MaxMessageChars int         // 0 = use default (32000)
 
-	// Global builtin tool settings (from builtin_tools table)
+	// Global builtin tool settings (from builtin_tools table, merged with per-agent overrides)
 	BuiltinToolSettings tools.BuiltinToolSettings
+
+	// Tenant-layer tool settings overlay (from builtin_tool_tenant_configs.settings).
+	TenantToolSettings tools.BuiltinToolSettings
+
+	// Tenant-specific allowed paths beyond workspace (from system_configs['allowed_paths']).
+	TenantAllowedPaths []string
 
 	// Per-tenant disabled tools (tool name → true means excluded)
 	DisabledTools map[string]bool
@@ -458,6 +486,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		cacheInvalidate:        cfg.CacheInvalidate,
 		compactionCfg:          cfg.CompactionCfg,
 		contextPruningCfg:      cfg.ContextPruningCfg,
+		tokenCounter:           tokencount.NewTiktokenCounter(),
 		sandboxEnabled:         cfg.SandboxEnabled,
 		sandboxContainerDir:    cfg.SandboxContainerDir,
 		sandboxWorkspaceAccess: cfg.SandboxWorkspaceAccess,
@@ -467,6 +496,8 @@ func NewLoop(cfg LoopConfig) *Loop {
 		injectionAction:        action,
 		maxMessageChars:        cfg.MaxMessageChars,
 		builtinToolSettings:    cfg.BuiltinToolSettings,
+		tenantToolSettings:     cfg.TenantToolSettings,
+		tenantAllowedPaths:     cfg.TenantAllowedPaths,
 		disabledTools:          cfg.DisabledTools,
 		reasoningConfig:        cfg.ReasoningConfig,
 		promptMode:             cfg.PromptMode,
