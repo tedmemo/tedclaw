@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# TedClaw backup script — run daily via cron or manually
-# Backs up: PostgreSQL (all agents, memory, conversations, skills config)
+# TedClaw backup script — backs up PostgreSQL + copies to Google Drive
+# Backs up: all agents, memory, conversations, skills config, cron jobs
 #
 # Usage: ./backup.sh
-# Restore: cat backup-YYYYMMDD.sql | docker exec -i tedclaw-postgres-1 psql -U goclaw goclaw
+# Restore: gunzip < backup.sql.gz | docker exec -i tedclaw-postgres-1 psql -U goclaw goclaw
 
 set -euo pipefail
 
 BACKUP_DIR="./backups"
+GDRIVE_DIR="D:/NAS/VTC/AI/PROJECTS/Tedbot/backups"
 DATE=$(date +%Y%m%d-%H%M)
 BACKUP_FILE="${BACKUP_DIR}/tedclaw-${DATE}.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
+mkdir -p "$GDRIVE_DIR"
 
 echo "Backing up TedClaw database..."
 docker exec tedclaw-postgres-1 pg_dump -U goclaw goclaw | gzip > "$BACKUP_FILE"
@@ -19,13 +21,14 @@ docker exec tedclaw-postgres-1 pg_dump -U goclaw goclaw | gzip > "$BACKUP_FILE"
 SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
 echo "Backup saved: $BACKUP_FILE ($SIZE)"
 
-# Keep only last 30 backups
-ls -t "$BACKUP_DIR"/tedclaw-*.sql.gz 2>/dev/null | tail -n +31 | xargs -r rm
-echo "Old backups cleaned (keeping last 30)"
+# Copy to Google Drive sync folder
+cp "$BACKUP_FILE" "$GDRIVE_DIR/"
+echo "Copied to Google Drive: $GDRIVE_DIR/"
 
-# Optional: commit to git for offsite backup
-if [ "${1:-}" = "--git" ]; then
-    git add "$BACKUP_DIR"/*.sql.gz
-    git commit -m "backup: tedclaw database $(date +%Y-%m-%d)"
-    echo "Committed to git"
-fi
+# Keep last 30 local backups
+ls -t "$BACKUP_DIR"/tedclaw-*.sql.gz 2>/dev/null | tail -n +31 | xargs -r rm
+
+# Keep last 10 Drive backups (save space)
+ls -t "$GDRIVE_DIR"/tedclaw-*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm
+
+echo "Cleanup done (local: 30, Drive: 10)"
